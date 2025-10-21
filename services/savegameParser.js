@@ -147,8 +147,8 @@ class SavegameParser {
                         ship_class: attrs.class || 'ship',
                         ship_type: attrs.macro || 'unknown',
                         sector: attrs.sector || 'Unknown Sector',
-                        hull_health: parseFloat(attrs.hull || 100),
-                        shield_health: parseFloat(attrs.shield || 100),
+                        hull_health: attrs.hull != null ? parseFloat(attrs.hull) : null,
+                        shield_health: attrs.shield != null ? parseFloat(attrs.shield) : null,
                         commander: attrs.commander || null,
                         metadata: {
                             owner: attrs.owner,
