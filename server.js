@@ -69,7 +69,7 @@ class Server {
                 }
             }
         } catch (error) {
-            console.error(chalk.red('Failed to initialize savegame services:'), error.message);
+            console.error(chalk.red('Failed to initialize savegame services:'), error);
         }
     }
 
