@@ -246,7 +246,7 @@ class SavegameParser {
                 }
             }
         } catch (error) {
-            // Silent fail - not critical
+            console.error(chalk.yellow('Warning: Failed to extract station modules:'), error.message);
         }
 
         return modules;
