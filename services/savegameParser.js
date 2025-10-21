@@ -305,7 +305,7 @@ class SavegameParser {
                 blueprints.push({
                     blueprint_name: attrs.name || attrs.ware || 'unknown',
                     blueprint_type: attrs.type || 'ship',
-                    is_owned: attrs.owned === 'true' || attrs.owned === '1' || true,
+                    is_owned: attrs.owned === 'true' || attrs.owned === '1',
                     metadata: {
                         race: attrs.race,
                         ware: attrs.ware
