@@ -79,7 +79,7 @@ class SavegameParser {
                 }
             };
         } catch (error) {
-            console.error(chalk.red(`Failed to parse savegame ${filePath}:`), error.message);
+            console.error(chalk.red(`Failed to parse savegame ${filePath}:`), error);
             throw error;
         }
     }
