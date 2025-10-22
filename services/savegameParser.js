@@ -1,375 +1,267 @@
 const fs = require('fs');
 const zlib = require('zlib');
 const path = require('path');
-const { XMLParser } = require('fast-xml-parser');
+const sax = require('sax');
 const chalk = require('chalk');
 
 class SavegameParser {
     constructor(databaseService) {
         this.db = databaseService;
-        this.parser = new XMLParser({
-            ignoreAttributes: false,
-            attributeNamePrefix: '@_',
-            parseAttributeValue: true,
-            trimValues: true,
-            numberParseOptions: {
-                leadingZeros: false,
-                hex: true,
-                skipLike: /^0x/
-            }
-        });
     }
 
     /**
-     * Parse a savegame file
+     * Parse a savegame file using true streaming SAX parser
      * @param {string} filePath - Path to the .xml.gz savegame file
      * @returns {Promise<Object>} Parsed savegame data
      */
     async parseSavegame(filePath) {
-        try {
-            console.log(chalk.blue(`Parsing savegame: ${path.basename(filePath)}`));
-
-            // Read file stats
-            const stats = fs.statSync(filePath);
-            const filename = path.basename(filePath);
-
-            // Read and decompress the file
-            const compressed = fs.readFileSync(filePath);
-            const xmlContent = await this.decompress(compressed);
-
-            // Parse XML
-            const parsed = this.parser.parse(xmlContent);
-
-            // Extract relevant data
-            const savegameData = this.extractSavegameData(parsed, filePath, filename, stats);
-
-            // Store in database
-            const savegameId = this.db.upsertSavegame(savegameData);
-
-            // Extract and store ships
-            const ships = this.extractShips(parsed);
-            if (ships.length > 0) {
-                this.db.insertShips(savegameId, ships);
-            }
-
-            // Extract and store stations
-            const stations = this.extractStations(parsed);
-            if (stations.length > 0) {
-                this.db.insertStations(savegameId, stations);
-            }
-
-            // Extract and store blueprints
-            const blueprints = this.extractBlueprints(parsed);
-            if (blueprints.length > 0) {
-                this.db.insertBlueprints(savegameId, blueprints);
-            }
-
-            console.log(chalk.green(`✓ Savegame parsed successfully: ${filename}`));
-            console.log(chalk.gray(`  Ships: ${ships.length}, Stations: ${stations.length}, Blueprints: ${blueprints.length}`));
-
-            return {
-                savegameId,
-                filename,
-                summary: {
-                    ships: ships.length,
-                    stations: stations.length,
-                    blueprints: blueprints.length,
-                    player_name: savegameData.player_name,
-                    player_money: savegameData.player_money
-                }
-            };
-        } catch (error) {
-            console.error(chalk.red(`Failed to parse savegame ${filePath}:`), error);
-            throw error;
-        }
-    }
-
-    /**
-     * Decompress gzipped content
-     */
-    decompress(buffer) {
         return new Promise((resolve, reject) => {
-            zlib.gunzip(buffer, (err, result) => {
-                if (err) reject(err);
-                else resolve(result.toString('utf-8'));
-            });
+            try {
+                console.log(chalk.blue(`Parsing savegame: ${path.basename(filePath)}`));
+
+                const stats = fs.statSync(filePath);
+                const filename = path.basename(filePath);
+
+                // State for parsing
+                const state = {
+                    savegameInfo: {
+                        filename,
+                        file_path: filePath,
+                        file_modified_at: stats.mtime.toISOString(),
+                        file_size: stats.size,
+                        player_name: 'Unknown',
+                        player_money: 0,
+                        playtime_seconds: 0,
+                        game_version: 'Unknown',
+                        metadata: {}
+                    },
+                    savegameId: null,
+                    counters: {
+                        ships: 0,
+                        stations: 0,
+                        blueprints: 0
+                    },
+                    batches: {
+                        ships: [],
+                        stations: [],
+                        blueprints: []
+                    }
+                };
+
+                const BATCH_SIZE = 500;
+
+                // Create SAX parser (strict mode, no buffering)
+                const parser = sax.createStream(true, {
+                    trim: true,
+                    normalize: true,
+                    lowercase: false
+                });
+
+                // Add destroy method for Node.js v24 compatibility
+                if (!parser.destroy) {
+                    parser.destroy = function(err) {
+                        if (this._readableState) {
+                            this._readableState.destroyed = true;
+                        }
+                        if (err) {
+                            this.emit('error', err);
+                        }
+                        this.emit('close');
+                    };
+                }
+
+                // Create streaming pipeline
+                const fileStream = fs.createReadStream(filePath);
+                const gunzip = zlib.createGunzip();
+
+                console.log(chalk.gray(`  Starting SAX stream parse...`));
+
+                // Handle SAX events
+                parser.on('opentag', (node) => {
+                    const tag = node.name;
+                    const attrs = node.attributes;
+
+                    // Capture info
+                    if (tag === 'info') {
+                        state.savegameInfo.playtime_seconds = parseInt(attrs.playtime || 0);
+                        state.savegameInfo.game_version = attrs.version || 'Unknown';
+                        state.savegameInfo.metadata.save_time = attrs.save || null;
+                        console.log(chalk.gray(`  Found info element`));
+                    }
+
+                    // Capture player
+                    else if (tag === 'player') {
+                        state.savegameInfo.player_name = attrs.name || 'Unknown';
+                        state.savegameInfo.player_money = parseInt(attrs.money || 0);
+                        state.savegameInfo.metadata.location = attrs.location || null;
+
+                        // Create DB entry immediately
+                        if (!state.savegameId) {
+                            state.savegameId = this.db.upsertSavegame(state.savegameInfo);
+                            console.log(chalk.gray(`  Created DB entry with ID: ${state.savegameId}`));
+                        }
+                    }
+
+                    // Capture components (ships/stations)
+                    else if (tag === 'component') {
+                        const componentClass = attrs.class;
+                        const macro = attrs.macro || '';
+
+                        // Ship
+                        if (componentClass === 'ship' || macro.includes('ship')) {
+                            state.batches.ships.push({
+                                ship_id: attrs.id || attrs.code || 'unknown',
+                                ship_name: attrs.name || 'Unnamed Ship',
+                                ship_class: componentClass || 'ship',
+                                ship_type: macro || 'unknown',
+                                sector: attrs.sector || 'Unknown Sector',
+                                hull_health: attrs.hull != null ? parseFloat(attrs.hull) : null,
+                                shield_health: attrs.shield != null ? parseFloat(attrs.shield) : null,
+                                commander: attrs.commander || null,
+                                metadata: {
+                                    owner: attrs.owner,
+                                    purpose: attrs.purpose,
+                                    position: {
+                                        x: attrs.x,
+                                        y: attrs.y,
+                                        z: attrs.z
+                                    }
+                                }
+                            });
+
+                            state.counters.ships++;
+
+                            // Batch write
+                            if (state.batches.ships.length >= BATCH_SIZE && state.savegameId) {
+                                this.db.insertShips(state.savegameId, state.batches.ships);
+                                console.log(chalk.gray(`  Ships: ${state.counters.ships} (batch written)`));
+                                state.batches.ships = [];
+                            }
+                        }
+
+                        // Station (simplified - no nested data to avoid memory issues)
+                        else if (componentClass === 'station' || macro.includes('station')) {
+                            state.batches.stations.push({
+                                station_id: attrs.id || attrs.code || 'unknown',
+                                station_name: attrs.name || 'Unnamed Station',
+                                owner: attrs.owner || 'Unknown',
+                                sector: attrs.sector || 'Unknown Sector',
+                                position_x: parseFloat(attrs.x || 0),
+                                position_y: parseFloat(attrs.y || 0),
+                                position_z: parseFloat(attrs.z || 0),
+                                total_storage: 0,
+                                total_workforce: parseInt(attrs.workforce || 0),
+                                modules: [],
+                                inventory: [],
+                                metadata: {
+                                    race: attrs.race,
+                                    purpose: attrs.purpose
+                                }
+                            });
+
+                            state.counters.stations++;
+
+                            // Batch write
+                            if (state.batches.stations.length >= BATCH_SIZE && state.savegameId) {
+                                this.db.insertStations(state.savegameId, state.batches.stations);
+                                console.log(chalk.gray(`  Stations: ${state.counters.stations} (batch written)`));
+                                state.batches.stations = [];
+                            }
+                        }
+                    }
+
+                    // Blueprints
+                    else if (tag === 'blueprint') {
+                        state.batches.blueprints.push({
+                            blueprint_name: attrs.name || attrs.ware || 'unknown',
+                            blueprint_type: attrs.type || 'ship',
+                            is_owned: attrs.owned === 'true' || attrs.owned === '1',
+                            metadata: {
+                                race: attrs.race,
+                                ware: attrs.ware
+                            }
+                        });
+
+                        state.counters.blueprints++;
+
+                        // Batch write
+                        if (state.batches.blueprints.length >= BATCH_SIZE && state.savegameId) {
+                            this.db.insertBlueprints(state.savegameId, state.batches.blueprints);
+                            state.batches.blueprints = [];
+                        }
+                    }
+                });
+
+                parser.on('error', (err) => {
+                    console.error(chalk.red(`SAX parsing error:`), err);
+                    // Clean up streams
+                    fileStream.destroy();
+                    gunzip.destroy();
+                    reject(err);
+                });
+
+                parser.on('end', () => {
+                    console.log(chalk.gray(`  Stream ended, writing final batches...`));
+                    try {
+                        // Ensure DB entry exists
+                        if (!state.savegameId) {
+                            state.savegameId = this.db.upsertSavegame(state.savegameInfo);
+                        }
+
+                        // Write remaining batches
+                        if (state.batches.ships.length > 0) {
+                            this.db.insertShips(state.savegameId, state.batches.ships);
+                        }
+                        if (state.batches.stations.length > 0) {
+                            this.db.insertStations(state.savegameId, state.batches.stations);
+                        }
+                        if (state.batches.blueprints.length > 0) {
+                            this.db.insertBlueprints(state.savegameId, state.batches.blueprints);
+                        }
+
+                        console.log(chalk.green(`✓ Savegame parsed successfully: ${filename}`));
+                        console.log(chalk.gray(`  Ships: ${state.counters.ships}, Stations: ${state.counters.stations}, Blueprints: ${state.counters.blueprints}`));
+
+                        resolve({
+                            savegameId: state.savegameId,
+                            filename,
+                            summary: {
+                                ships: state.counters.ships,
+                                stations: state.counters.stations,
+                                blueprints: state.counters.blueprints,
+                                player_name: state.savegameInfo.player_name,
+                                player_money: state.savegameInfo.player_money
+                            }
+                        });
+                    } catch (dbError) {
+                        console.error(chalk.red(`Database error:`), dbError);
+                        reject(dbError);
+                    }
+                });
+
+                // Handle stream errors
+                fileStream.on('error', (err) => {
+                    console.error(chalk.red(`File stream error:`), err);
+                    gunzip.destroy();
+                    parser.destroy();
+                    reject(err);
+                });
+
+                gunzip.on('error', (err) => {
+                    console.error(chalk.red(`Gunzip error:`), err);
+                    fileStream.destroy();
+                    parser.destroy();
+                    reject(err);
+                });
+
+                // Start the pipeline
+                fileStream.pipe(gunzip).pipe(parser);
+
+            } catch (error) {
+                console.error(chalk.red(`Failed to parse savegame ${filePath}:`), error);
+                reject(error);
+            }
         });
-    }
-
-    /**
-     * Extract basic savegame metadata
-     */
-    extractSavegameData(parsed, filePath, filename, stats) {
-        const savegame = parsed.savegame || {};
-        const info = savegame.info || {};
-        const player = savegame.player || {};
-
-        return {
-            filename,
-            file_path: filePath,
-            file_modified_at: stats.mtime.toISOString(),
-            file_size: stats.size,
-            player_name: player['@_name'] || 'Unknown',
-            player_money: parseInt(player['@_money'] || 0),
-            playtime_seconds: parseInt(info['@_playtime'] || 0),
-            game_version: info['@_version'] || 'Unknown',
-            metadata: {
-                save_time: info['@_save'] || null,
-                location: player['@_location'] || null,
-                galaxy: savegame['@_galaxy'] || null
-            }
-        };
-    }
-
-    /**
-     * Extract ships from savegame
-     */
-    extractShips(parsed) {
-        const ships = [];
-
-        try {
-            // Navigate to ships in XML structure
-            // X4 savegame structure varies, so we need to handle multiple paths
-            const universe = parsed.savegame?.universe;
-            if (!universe) return ships;
-
-            // Find all components that are ships
-            const components = this.findAllComponents(universe);
-
-            for (const component of components) {
-                const attrs = component['@_'] || {};
-
-                // Check if it's a ship (has class 'ship')
-                if (attrs.class === 'ship' || attrs.macro?.includes('ship')) {
-                    ships.push({
-                        ship_id: attrs.id || attrs.code || 'unknown',
-                        ship_name: attrs.name || 'Unnamed Ship',
-                        ship_class: attrs.class || 'ship',
-                        ship_type: attrs.macro || 'unknown',
-                        sector: attrs.sector || 'Unknown Sector',
-                        hull_health: attrs.hull != null ? parseFloat(attrs.hull) : null,
-                        shield_health: attrs.shield != null ? parseFloat(attrs.shield) : null,
-                        commander: attrs.commander || null,
-                        metadata: {
-                            owner: attrs.owner,
-                            purpose: attrs.purpose,
-                            position: {
-                                x: attrs.x,
-                                y: attrs.y,
-                                z: attrs.z
-                            }
-                        }
-                    });
-                }
-            }
-        } catch (error) {
-            console.error(chalk.yellow('Warning: Failed to extract ships:'), error.message);
-        }
-
-        return ships;
-    }
-
-    /**
-     * Extract stations from savegame
-     */
-    extractStations(parsed) {
-        const stations = [];
-
-        try {
-            const universe = parsed.savegame?.universe;
-            if (!universe) return stations;
-
-            const components = this.findAllComponents(universe);
-
-            for (const component of components) {
-                const attrs = component['@_'] || {};
-
-                // Check if it's a station
-                if (attrs.class === 'station' || attrs.macro?.includes('station')) {
-                    const modules = this.extractStationModules(component);
-                    const inventory = this.extractStationInventory(component);
-
-                    stations.push({
-                        station_id: attrs.id || attrs.code || 'unknown',
-                        station_name: attrs.name || 'Unnamed Station',
-                        owner: attrs.owner || 'Unknown',
-                        sector: attrs.sector || 'Unknown Sector',
-                        position_x: parseFloat(attrs.x || 0),
-                        position_y: parseFloat(attrs.y || 0),
-                        position_z: parseFloat(attrs.z || 0),
-                        total_storage: this.calculateTotalStorage(inventory),
-                        total_workforce: parseInt(attrs.workforce || 0),
-                        modules,
-                        inventory,
-                        metadata: {
-                            race: attrs.race,
-                            purpose: attrs.purpose
-                        }
-                    });
-                }
-            }
-        } catch (error) {
-            console.error(chalk.yellow('Warning: Failed to extract stations:'), error.message);
-        }
-
-        return stations;
-    }
-
-    /**
-     * Extract station modules
-     */
-    extractStationModules(stationComponent) {
-        const modules = [];
-
-        try {
-            const connections = stationComponent.connections?.connection;
-            if (!connections) return modules;
-
-            const connectionArray = Array.isArray(connections) ? connections : [connections];
-
-            for (const conn of connectionArray) {
-                const attrs = conn['@_'] || {};
-                if (attrs.macro) {
-                    modules.push({
-                        module_macro: attrs.macro,
-                        module_type: this.inferModuleType(attrs.macro),
-                        quantity: 1,
-                        metadata: {
-                            connection: attrs.connection,
-                            offset: {
-                                x: attrs.offsetx,
-                                y: attrs.offsety,
-                                z: attrs.offsetz
-                            }
-                        }
-                    });
-                }
-            }
-        } catch (error) {
-            console.error(chalk.yellow('Warning: Failed to extract station modules:'), error.message);
-        }
-
-        return modules;
-    }
-
-    /**
-     * Extract station inventory
-     */
-    extractStationInventory(stationComponent) {
-        const inventory = [];
-
-        try {
-            const storage = stationComponent.storage?.ware;
-            if (!storage) return inventory;
-
-            const wareArray = Array.isArray(storage) ? storage : [storage];
-
-            for (const ware of wareArray) {
-                const attrs = ware['@_'] || {};
-                inventory.push({
-                    ware: attrs.ware || 'unknown',
-                    quantity: parseInt(attrs.amount || 0),
-                    capacity: parseInt(attrs.capacity || 0),
-                    price: parseFloat(attrs.price || 0),
-                    metadata: {
-                        buy: attrs.buy === 'true' || attrs.buy === '1',
-                        sell: attrs.sell === 'true' || attrs.sell === '1'
-                    }
-                });
-            }
-        } catch (error) {
-            // Silent fail
-        }
-
-        return inventory;
-    }
-
-    /**
-     * Extract blueprints from savegame
-     */
-    extractBlueprints(parsed) {
-        const blueprints = [];
-
-        try {
-            const player = parsed.savegame?.player;
-            if (!player) return blueprints;
-
-            // Blueprints might be stored in different locations depending on game version
-            const bps = player.blueprints?.blueprint || player.research?.blueprint;
-            if (!bps) return blueprints;
-
-            const bpArray = Array.isArray(bps) ? bps : [bps];
-
-            for (const bp of bpArray) {
-                const attrs = bp['@_'] || {};
-                blueprints.push({
-                    blueprint_name: attrs.name || attrs.ware || 'unknown',
-                    blueprint_type: attrs.type || 'ship',
-                    is_owned: attrs.owned === 'true' || attrs.owned === '1',
-                    metadata: {
-                        race: attrs.race,
-                        ware: attrs.ware
-                    }
-                });
-            }
-        } catch (error) {
-            console.error(chalk.yellow('Warning: Failed to extract blueprints:'), error.message);
-        }
-
-        return blueprints;
-    }
-
-    /**
-     * Recursively find all components in the universe
-     */
-    findAllComponents(obj, components = []) {
-        if (!obj) return components;
-
-        if (obj.component) {
-            const compArray = Array.isArray(obj.component) ? obj.component : [obj.component];
-            components.push(...compArray);
-
-            // Recursively search nested components
-            for (const comp of compArray) {
-                if (comp.component) {
-                    this.findAllComponents(comp, components);
-                }
-            }
-        }
-
-        // Search in nested objects
-        for (const key in obj) {
-            if (typeof obj[key] === 'object' && key !== 'component') {
-                this.findAllComponents(obj[key], components);
-            }
-        }
-
-        return components;
-    }
-
-    /**
-     * Infer module type from macro name
-     */
-    inferModuleType(macro) {
-        if (!macro) return 'unknown';
-
-        const lower = macro.toLowerCase();
-
-        if (lower.includes('production')) return 'production';
-        if (lower.includes('storage')) return 'storage';
-        if (lower.includes('habitation') || lower.includes('living')) return 'habitation';
-        if (lower.includes('dock')) return 'dock';
-        if (lower.includes('defense') || lower.includes('turret')) return 'defense';
-        if (lower.includes('pier')) return 'pier';
-
-        return 'other';
-    }
-
-    /**
-     * Calculate total storage capacity
-     */
-    calculateTotalStorage(inventory) {
-        return inventory.reduce((total, item) => total + (item.capacity || 0), 0);
     }
 
     /**
@@ -388,7 +280,7 @@ class SavegameParser {
                 path: filePath,
                 stats: fs.statSync(filePath)
             }))
-            .sort((a, b) => b.stats.mtime - a.stats.mtime); // Most recent first
+            .sort((a, b) => b.stats.mtime - a.stats.mtime);
     }
 
     /**
