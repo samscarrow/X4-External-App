@@ -18,6 +18,11 @@ const isPackaged = !!process.pkg;
 const runtimeDir = isPackaged ? path.dirname(process.execPath) : __dirname;
 const devFilePath = path.join(runtimeDir, 'dev-data.json');
 
+// Import savegame services
+const DatabaseService = require('./services/database');
+const SavegameParser = require('./services/savegameParser');
+const SavegameWatcher = require('./services/savegameWatcher');
+
 app.use(bodyParser.json({ limit: '50mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
 
@@ -25,11 +30,47 @@ class Server {
     dataObject = null;
     updatePending = false;
     lastOutputMessage = null;
+    db = null;
+    savegameParser = null;
+    savegameWatcher = null;
 
     constructor (app, hostname, port) {
         this.app = app;
         this.hostname = hostname;
         this.port = port;
+
+        // Initialize savegame services
+        this.initializeSavegameServices();
+    }
+
+    /**
+     * Initialize savegame parsing services
+     */
+    initializeSavegameServices() {
+        try {
+            // Initialize database
+            this.db = new DatabaseService();
+            this.db.init();
+
+            // Initialize parser
+            this.savegameParser = new SavegameParser(this.db);
+
+            // Initialize watcher if savegame path is configured
+            const savegamePath = process.env.X4_SAVEGAME_PATH;
+            if (savegamePath && fs.existsSync(savegamePath)) {
+                this.savegameWatcher = new SavegameWatcher(this.savegameParser, savegamePath);
+                this.savegameWatcher.start();
+                this.outputMessage(chalk.green(`✓ Watching savegames at: ${savegamePath}`));
+            } else {
+                this.savegameWatcher = new SavegameWatcher(this.savegameParser);
+                if (!savegamePath) {
+                    this.outputMessage(chalk.yellow('X4_SAVEGAME_PATH not set in .env - savegame auto-parsing disabled'));
+                    this.outputMessage(chalk.yellow('Set X4_SAVEGAME_PATH in .env to enable automatic savegame parsing'));
+                }
+            }
+        } catch (error) {
+            console.error(chalk.red('Failed to initialize savegame services:'), error);
+        }
     }
 
     /**
@@ -164,6 +205,116 @@ class Server {
             }
 
             response.send('ok');
+        });
+
+        /**
+         * Savegame API Endpoints
+         */
+
+        // Get all savegames
+        this.app.get('/api/savegames', (request, response) => {
+            try {
+                const savegames = this.db.getAllSavegames();
+                response.json(savegames);
+            } catch (error) {
+                response.status(500).json({ error: error.message });
+            }
+        });
+
+        // Get latest savegame
+        this.app.get('/api/savegames/latest', (request, response) => {
+            try {
+                const savegame = this.db.getLatestSavegame();
+                if (!savegame) {
+                    return response.status(404).json({ error: 'No savegames found' });
+                }
+                response.json(savegame);
+            } catch (error) {
+                response.status(500).json({ error: error.message });
+            }
+        });
+
+        // Get complete savegame data with all related entities
+        this.app.get('/api/savegames/:id', (request, response) => {
+            try {
+                const savegameId = parseInt(request.params.id);
+                const data = this.db.getSavegameData(savegameId);
+
+                if (!data) {
+                    return response.status(404).json({ error: 'Savegame not found' });
+                }
+
+                response.json(data);
+            } catch (error) {
+                response.status(500).json({ error: error.message });
+            }
+        });
+
+        // Get ships for a savegame
+        this.app.get('/api/savegames/:id/ships', (request, response) => {
+            try {
+                const savegameId = parseInt(request.params.id);
+                const ships = this.db.getShips(savegameId);
+                response.json(ships);
+            } catch (error) {
+                response.status(500).json({ error: error.message });
+            }
+        });
+
+        // Get stations for a savegame
+        this.app.get('/api/savegames/:id/stations', (request, response) => {
+            try {
+                const savegameId = parseInt(request.params.id);
+                const stations = this.db.getStations(savegameId);
+                response.json(stations);
+            } catch (error) {
+                response.status(500).json({ error: error.message });
+            }
+        });
+
+        // Get blueprints for a savegame
+        this.app.get('/api/savegames/:id/blueprints', (request, response) => {
+            try {
+                const savegameId = parseInt(request.params.id);
+                const blueprints = this.db.getBlueprints(savegameId);
+                response.json(blueprints);
+            } catch (error) {
+                response.status(500).json({ error: error.message });
+            }
+        });
+
+        // Manually trigger savegame parsing
+        this.app.post('/api/savegames/parse', async (request, response) => {
+            try {
+                const { filePath } = request.body;
+
+                if (!filePath) {
+                    return response.status(400).json({ error: 'filePath is required' });
+                }
+
+                if (!fs.existsSync(filePath)) {
+                    return response.status(404).json({ error: 'File not found' });
+                }
+
+                const result = await this.savegameParser.parseSavegame(filePath);
+                response.json(result);
+            } catch (error) {
+                response.status(500).json({ error: error.message });
+            }
+        });
+
+        // Parse most recent savegame
+        this.app.post('/api/savegames/parse-latest', async (request, response) => {
+            try {
+                if (!this.savegameWatcher) {
+                    return response.status(400).json({ error: 'Savegame watcher not initialized' });
+                }
+
+                const result = await this.savegameWatcher.parseMostRecent();
+                response.json(result);
+            } catch (error) {
+                response.status(500).json({ error: error.message });
+            }
         });
 
         return this

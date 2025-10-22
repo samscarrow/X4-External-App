@@ -26,26 +26,31 @@
     "@fortawesome/free-solid-svg-icons": "^5.15.4",
     "@fortawesome/vue-fontawesome": "^3.0.0-5",
     "@vueform/toggle": "^2.0.1",
+    "better-sqlite3": "^11.7.0",
     "body-parser": "^2.2.0",
     "chalk": "4.1.2",
     "chokidar": "^3.5.2",
     "dotenv": "^10.0.0",
     "express": "^4.17.2",
+    "fast-xml-parser": "^4.3.2",
     "github-version-checker": "^2.2.0",
     "local-ipv4-address": "^0.0.2",
     "lodash": "^4.17.21",
     "mitt": "^3.0.0",
+    "node-cron": "^3.0.3",
     "portfinder": "^1.0.28",
+    "sax": "^1.4.1",
     "vue": "^3.2.25",
     "vue-i18n": "^11.1.5",
-    "vue3-perfect-scrollbar": "^1.5.5",
+    "vue3-perfect-scrollbar": "^2.0.0",
     "vuedraggable": "^4.1.0",
-    "vuex": "^4.0.2"
+    "vuex": "^4.0.2",
+    "xml-stream": "^0.4.5"
   },
   "devDependencies": {
-    "@vitejs/plugin-vue": "^2.0.0",
+    "@vitejs/plugin-vue": "^6.0.1",
     "sass": "^1.87.0",
-    "vite": "^2.7.2",
-    "vite-plugin-pwa": "^0.12.8"
+    "vite": "^7.1.11",
+    "vite-plugin-pwa": "^1.1.0"
   }
 }

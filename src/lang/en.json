@@ -189,6 +189,29 @@
           "capital": "Capital ship licence"
         },
         "relation_change": "Recent relation change"
+      },
+      "savegame_info": {
+        "title": "Savegame Info",
+        "refresh": "Refresh",
+        "loading": "Loading savegame data...",
+        "no_data": "No savegame data available",
+        "configure_path": "Configure X4_SAVEGAME_PATH in .env to enable auto-parsing",
+        "error_loading": "Error loading data: {error}",
+        "player": "Player",
+        "credits": "Credits",
+        "playtime": "Playtime",
+        "version": "Game Version",
+        "ships": "Ships",
+        "stations": "Stations",
+        "blueprints": "Blueprints",
+        "modules": "modules",
+        "wares": "wares",
+        "no_ships": "No ships found",
+        "no_stations": "No stations found",
+        "no_blueprints": "No blueprints found",
+        "show_more": "Show more",
+        "remaining": "remaining",
+        "last_parsed": "Last parsed"
       }
     }
   }

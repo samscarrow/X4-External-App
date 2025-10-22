@@ -29,4 +29,7 @@ export default {
     factions: {
         widgetName: 'app.widgets.factions.title',
     },
+    savegameInfo: {
+        widgetName: 'app.widgets.savegame_info.title',
+    },
 }
