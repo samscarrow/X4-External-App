@@ -142,8 +142,19 @@
                     <div class="text-muted small">{{ ship.sector }}</div>
                   </div>
                   <div class="text-end small">
-                    <div>Hull: {{ ship.hull_health }}%</div>
-                    <div v-if="ship.shield_health">Shield: {{ ship.shield_health }}%</div>
+                    <div>
+                      <span class="text-muted">Hull:</span>
+                      <span v-if="ship.hull_health !== null" :class="getHealthClass(ship.hull_health)">
+                        {{ formatHealth(ship.hull_health) }}
+                      </span>
+                      <span v-else class="text-muted">N/A</span>
+                    </div>
+                    <div v-if="ship.shield_health !== null">
+                      <span class="text-muted">Shield:</span>
+                      <span :class="getHealthClass(ship.shield_health)">
+                        {{ formatHealth(ship.shield_health) }}
+                      </span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -206,11 +217,20 @@
                     <strong>{{ bp.blueprint_name }}</strong>
                     <span class="badge bg-secondary ms-2">{{ bp.blueprint_type }}</span>
                   </div>
-                  <font-awesome-icon
-                    v-if="bp.is_owned"
-                    icon="check-circle"
-                    class="text-success"
-                  />
+                  <div>
+                    <font-awesome-icon
+                      v-if="bp.is_owned"
+                      icon="check-circle"
+                      class="text-success"
+                      title="Owned"
+                    />
+                    <font-awesome-icon
+                      v-else
+                      icon="times-circle"
+                      class="text-muted"
+                      title="Not Owned"
+                    />
+                  </div>
                 </div>
               </div>
               <button
@@ -331,6 +351,25 @@ export default {
       if (!dateString) return 'N/A';
       const date = new Date(dateString);
       return date.toLocaleString();
+    },
+
+    formatHealth(value) {
+      if (value === null || value === undefined) return 'N/A';
+      return `${Math.round(value)}%`;
+    },
+
+    getHealthClass(value) {
+      if (value === null || value === undefined) return '';
+
+      if (value >= 80) {
+        return 'text-success'; // Green for healthy
+      } else if (value >= 50) {
+        return 'text-warning'; // Yellow for damaged
+      } else if (value >= 25) {
+        return 'text-danger'; // Red for critical
+      } else {
+        return 'text-danger fw-bold'; // Bold red for very critical
+      }
     }
   },
 

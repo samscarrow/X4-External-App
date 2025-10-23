@@ -3,10 +3,117 @@ const zlib = require('zlib');
 const path = require('path');
 const sax = require('sax');
 const chalk = require('chalk');
+const ModuleStatsLoader = require('./moduleStatsLoader');
+
+const DECIMAL_REGEX = /^-?\d+(\.\d+)?$/;
+
+function normalizeAttributeValue(value) {
+    if (value === undefined || value === null) {
+        return value;
+    }
+
+    if (typeof value !== 'string') {
+        return value;
+    }
+
+    const trimmed = value.trim();
+
+    if (trimmed === '') {
+        return trimmed;
+    }
+
+    if (trimmed === 'true') {
+        return true;
+    }
+
+    if (trimmed === 'false') {
+        return false;
+    }
+
+    if (DECIMAL_REGEX.test(trimmed)) {
+        return trimmed.includes('.') ? parseFloat(trimmed) : parseInt(trimmed, 10);
+    }
+
+    return value;
+}
+
+function parseFloatSafe(value) {
+    if (value === undefined || value === null || value === '') {
+        return null;
+    }
+
+    const num = parseFloat(value);
+    return Number.isFinite(num) ? num : null;
+}
+
+function parseIntSafe(value) {
+    if (value === undefined || value === null || value === '') {
+        return null;
+    }
+
+    const num = parseInt(value, 10);
+    return Number.isNaN(num) ? null : num;
+}
+
+function buildMetadata(attrs, excludeKeys = []) {
+    const metadata = {};
+
+    for (const [key, value] of Object.entries(attrs)) {
+        if (excludeKeys.includes(key)) {
+            continue;
+        }
+
+        const normalized = normalizeAttributeValue(value);
+        if (normalized !== undefined) {
+            metadata[key] = normalized;
+        }
+    }
+
+    return metadata;
+}
+
+function inferModuleTypeFromMacro(macro, fallback = 'other') {
+    if (!macro || typeof macro !== 'string') {
+        return fallback;
+    }
+
+    const lower = macro.toLowerCase();
+
+    if (lower.includes('storage') || lower.includes('warehouse') || lower.includes('_cont')) {
+        return 'storage';
+    }
+
+    if (lower.includes('prod') || lower.includes('factory') || lower.includes('refinery') || lower.includes('processing')) {
+        return 'production';
+    }
+
+    if (lower.includes('dock') || lower.includes('pier') || lower.includes('launch') || lower.includes('station_pla_dock')) {
+        return 'dock';
+    }
+
+    if (lower.includes('defence') || lower.includes('defense') || lower.includes('def_') || lower.includes('defence') || lower.includes('defplatform')) {
+        return 'defence';
+    }
+
+    if (lower.includes('hab') || lower.includes('workforce') || lower.includes('residence') || lower.includes('crew') || lower.includes('dorm')) {
+        return 'habitation';
+    }
+
+    if (lower.includes('research') || lower.includes('lab')) {
+        return 'research';
+    }
+
+    if (lower.includes('buildmodule') || lower.includes('struct_') || lower.includes('connection')) {
+        return 'structural';
+    }
+
+    return fallback;
+}
 
 class SavegameParser {
     constructor(databaseService) {
         this.db = databaseService;
+        this.moduleStatsLoader = new ModuleStatsLoader();
     }
 
     /**
@@ -45,7 +152,20 @@ class SavegameParser {
                         ships: [],
                         stations: [],
                         blueprints: []
-                    }
+                    },
+                    resetFlags: {
+                        ships: false,
+                        stations: false,
+                        blueprints: false
+                    },
+                    tagStack: [],
+                    context: {
+                        constructionDepth: 0,
+                        sequenceDepth: 0
+                    },
+                    componentStack: [],
+                    moduleStack: [],
+                    currentStation: null
                 };
 
                 const BATCH_SIZE = 500;
@@ -77,39 +197,138 @@ class SavegameParser {
                 console.log(chalk.gray(`  Starting SAX stream parse...`));
 
                 // Handle SAX events
+                const updateCurrentStationReference = () => {
+                    for (let i = state.componentStack.length - 1; i >= 0; i--) {
+                        const context = state.componentStack[i];
+                        if (context.kind === 'station') {
+                            state.currentStation = context.data;
+                            return;
+                        }
+                    }
+
+                    state.currentStation = null;
+                };
+
+                const flushShips = () => {
+                    if (!state.savegameId || state.batches.ships.length === 0) {
+                        return;
+                    }
+
+                    this.db.insertShips(state.savegameId, state.batches.ships, {
+                        reset: !state.resetFlags.ships
+                    });
+                    state.resetFlags.ships = true;
+                    state.batches.ships = [];
+                };
+
+                const flushStations = () => {
+                    if (!state.savegameId || state.batches.stations.length === 0) {
+                        return;
+                    }
+
+                    this.db.insertStations(state.savegameId, state.batches.stations, {
+                        reset: !state.resetFlags.stations
+                    });
+                    state.resetFlags.stations = true;
+                    state.batches.stations = [];
+                };
+
+                const flushBlueprints = () => {
+                    if (!state.savegameId || state.batches.blueprints.length === 0) {
+                        return;
+                    }
+
+                    this.db.insertBlueprints(state.savegameId, state.batches.blueprints, {
+                        reset: !state.resetFlags.blueprints
+                    });
+                    state.resetFlags.blueprints = true;
+                    state.batches.blueprints = [];
+                };
+
+                const applyModuleStats = (moduleObj, station) => {
+                    if (!this.moduleStatsLoader) {
+                        return;
+                    }
+
+                    const stats = this.moduleStatsLoader.getStats(moduleObj.module_macro);
+                    if (!stats) {
+                        return;
+                    }
+
+                    if (stats.workforceCapacity && moduleObj._workforceCapacity == null) {
+                        moduleObj._workforceCapacity = stats.workforceCapacity;
+                        moduleObj.metadata = moduleObj.metadata || {};
+                        moduleObj.metadata.workforce = moduleObj.metadata.workforce || {};
+
+                        if (moduleObj.metadata.workforce.capacity == null) {
+                            moduleObj.metadata.workforce.capacity = stats.workforceCapacity;
+                        }
+                    }
+
+                    if (stats.storageEntries && stats.storageEntries.length) {
+                        moduleObj._storageEntries = stats.storageEntries.map((entry) => ({
+                            capacity: entry.capacity,
+                            tags: Array.isArray(entry.tags) ? [...entry.tags] : []
+                        }));
+
+                        moduleObj.metadata = moduleObj.metadata || {};
+                        if (!moduleObj.metadata.storage) {
+                            moduleObj.metadata.storage = moduleObj._storageEntries;
+                        }
+                    }
+                };
+
                 parser.on('opentag', (node) => {
                     const tag = node.name;
-                    const attrs = node.attributes;
+                    const attrs = node.attributes || {};
+                    const parentTag = state.tagStack.length > 0 ? state.tagStack[state.tagStack.length - 1] : null;
+                    state.tagStack.push(tag);
 
-                    // Capture info
+                    if (tag === 'construction' && state.currentStation) {
+                        if (state.context.constructionDepth === 0) {
+                            const constructionMetadata = buildMetadata(attrs);
+                            if (Object.keys(constructionMetadata).length) {
+                                if (!state.currentStation.metadata.construction) {
+                                    state.currentStation.metadata.construction = [];
+                                }
+                                state.currentStation.metadata.construction.push(constructionMetadata);
+                            }
+                        }
+                        state.context.constructionDepth++;
+                    }
+
+                    if (tag === 'sequence' && state.context.constructionDepth > 0) {
+                        state.context.sequenceDepth++;
+                    }
+
                     if (tag === 'info') {
-                        state.savegameInfo.playtime_seconds = parseInt(attrs.playtime || 0);
+                        state.savegameInfo.playtime_seconds = parseInt(attrs.playtime || 0, 10);
                         state.savegameInfo.game_version = attrs.version || 'Unknown';
                         state.savegameInfo.metadata.save_time = attrs.save || null;
                         console.log(chalk.gray(`  Found info element`));
+                        return;
                     }
 
-                    // Capture player
-                    else if (tag === 'player') {
+                    if (tag === 'player') {
                         state.savegameInfo.player_name = attrs.name || 'Unknown';
-                        state.savegameInfo.player_money = parseInt(attrs.money || 0);
+                        state.savegameInfo.player_money = parseInt(attrs.money || 0, 10);
                         state.savegameInfo.metadata.location = attrs.location || null;
 
-                        // Create DB entry immediately
                         if (!state.savegameId) {
                             state.savegameId = this.db.upsertSavegame(state.savegameInfo);
                             console.log(chalk.gray(`  Created DB entry with ID: ${state.savegameId}`));
                         }
+                        return;
                     }
 
-                    // Capture components (ships/stations)
-                    else if (tag === 'component') {
-                        const componentClass = attrs.class;
+                    if (tag === 'component') {
+                        const componentClass = attrs.class || '';
                         const macro = attrs.macro || '';
+                        const isShip = componentClass === 'ship' || macro.includes('ship');
+                        const isStation = componentClass === 'station' || macro.includes('station');
 
-                        // Ship
-                        if (componentClass === 'ship' || macro.includes('ship')) {
-                            state.batches.ships.push({
+                        if (isShip) {
+                            const ship = {
                                 ship_id: attrs.id || attrs.code || 'unknown',
                                 ship_name: attrs.name || 'Unnamed Ship',
                                 ship_class: componentClass || 'ship',
@@ -127,51 +346,163 @@ class SavegameParser {
                                         z: attrs.z
                                     }
                                 }
-                            });
+                            };
 
-                            state.counters.ships++;
-
-                            // Batch write
-                            if (state.batches.ships.length >= BATCH_SIZE && state.savegameId) {
-                                this.db.insertShips(state.savegameId, state.batches.ships);
-                                console.log(chalk.gray(`  Ships: ${state.counters.ships} (batch written)`));
-                                state.batches.ships = [];
-                            }
+                            state.componentStack.push({ kind: 'ship', data: ship });
+                            return;
                         }
 
-                        // Station (simplified - no nested data to avoid memory issues)
-                        else if (componentClass === 'station' || macro.includes('station')) {
-                            state.batches.stations.push({
+                        if (isStation) {
+                            const baseMetadata = {
+                                race: attrs.race,
+                                purpose: attrs.purpose
+                            };
+
+                            const extraMetadata = buildMetadata(attrs, [
+                                'id',
+                                'code',
+                                'name',
+                                'owner',
+                                'faction',
+                                'sector',
+                                'zone',
+                                'system',
+                                'cluster',
+                                'class',
+                                'x',
+                                'y',
+                                'z',
+                                'workforce'
+                            ]);
+
+                            const stationMetadata = Object.fromEntries(
+                                Object.entries({ ...baseMetadata, ...extraMetadata })
+                                    .filter(([, value]) => value !== undefined && value !== null)
+                            );
+
+                            const workforceFromAttr = parseIntSafe(attrs.workforce) ?? parseIntSafe(attrs.workforcemax) ?? 0;
+
+                            const station = {
                                 station_id: attrs.id || attrs.code || 'unknown',
                                 station_name: attrs.name || 'Unnamed Station',
-                                owner: attrs.owner || 'Unknown',
-                                sector: attrs.sector || 'Unknown Sector',
-                                position_x: parseFloat(attrs.x || 0),
-                                position_y: parseFloat(attrs.y || 0),
-                                position_z: parseFloat(attrs.z || 0),
+                                owner: attrs.owner || attrs.faction || 'Unknown',
+                                sector: attrs.sector || attrs.zone || attrs.system || 'Unknown Sector',
+                                position_x: parseFloatSafe(attrs.x) ?? 0,
+                                position_y: parseFloatSafe(attrs.y) ?? 0,
+                                position_z: parseFloatSafe(attrs.z) ?? 0,
                                 total_storage: 0,
-                                total_workforce: parseInt(attrs.workforce || 0),
+                                total_workforce: workforceFromAttr || 0,
                                 modules: [],
                                 inventory: [],
-                                metadata: {
-                                    race: attrs.race,
-                                    purpose: attrs.purpose
-                                }
-                            });
+                                metadata: Object.keys(stationMetadata).length ? stationMetadata : {}
+                            };
 
-                            state.counters.stations++;
+                            station._workforceCapacityFromModules = 0;
+                            station._inventoryCapacity = 0;
+                            station._storageCapacityFromModules = 0;
+                            station._storageByTag = {};
 
-                            // Batch write
-                            if (state.batches.stations.length >= BATCH_SIZE && state.savegameId) {
-                                this.db.insertStations(state.savegameId, state.batches.stations);
-                                console.log(chalk.gray(`  Stations: ${state.counters.stations} (batch written)`));
-                                state.batches.stations = [];
-                            }
+                            state.componentStack.push({ kind: 'station', data: station });
+                            state.context.constructionDepth = 0;
+                            state.context.sequenceDepth = 0;
+                            state.currentStation = station;
+                            return;
                         }
+
+                        state.componentStack.push({ kind: 'component', data: null });
+                        return;
                     }
 
-                    // Blueprints
-                    else if (tag === 'blueprint') {
+                    if (tag === 'module' && state.currentStation) {
+                        const quantity = parseIntSafe(attrs.count) ?? parseIntSafe(attrs.quantity) ?? 1;
+                        const moduleMacro = attrs.macro || attrs.internalname || attrs.id || attrs.ref || 'unknown';
+                        const metadata = buildMetadata(attrs, ['macro', 'type', 'category', 'count', 'quantity']);
+                        const moduleType = attrs.type || attrs.category || inferModuleTypeFromMacro(moduleMacro);
+
+                        const module = {
+                            module_macro: moduleMacro,
+                            module_type: moduleType,
+                            quantity: quantity > 0 ? quantity : 1,
+                            metadata: metadata
+                        };
+
+                        module._workforceCapacity = parseIntSafe(attrs.workforcecapacity) ?? parseIntSafe(attrs.workforce);
+                        module._workforceEmployed = parseIntSafe(attrs.workforceactive) ?? null;
+
+                        applyModuleStats(module, state.currentStation);
+
+                        state.moduleStack.push({ module, station: state.currentStation, tag: 'module' });
+                        return;
+                    }
+
+                    if (
+                        tag === 'entry' &&
+                        state.currentStation &&
+                        state.context.constructionDepth > 0 &&
+                        state.context.sequenceDepth > 0 &&
+                        attrs.macro
+                    ) {
+                        const quantity = parseIntSafe(attrs.count) ?? parseIntSafe(attrs.quantity) ?? 1;
+                        const moduleMacro = attrs.macro;
+                        const metadata = buildMetadata(attrs, ['macro', 'type', 'category', 'count', 'quantity']);
+                        const moduleType = attrs.type || attrs.category || inferModuleTypeFromMacro(moduleMacro);
+
+                        const module = {
+                            module_macro: moduleMacro,
+                            module_type: moduleType,
+                            quantity: quantity > 0 ? quantity : 1,
+                            metadata: metadata
+                        };
+
+                        module._workforceCapacity = parseIntSafe(attrs.workforcecapacity) ?? parseIntSafe(attrs.workforce);
+                        module._workforceEmployed = parseIntSafe(attrs.workforceactive) ?? null;
+
+                        applyModuleStats(module, state.currentStation);
+
+                        state.moduleStack.push({ module, station: state.currentStation, tag: 'entry' });
+                        return;
+                    }
+
+                    if (tag === 'workforce') {
+                        if (state.moduleStack.length > 0) {
+                            const ctx = state.moduleStack[state.moduleStack.length - 1];
+                            const capacity = parseIntSafe(attrs.capacity) ?? parseIntSafe(attrs.max);
+                            const employed = parseIntSafe(attrs.employed) ?? parseIntSafe(attrs.current) ?? parseIntSafe(attrs.active);
+
+                            if (!ctx.module.metadata.workforce) {
+                                ctx.module.metadata.workforce = {};
+                            }
+
+                            if (capacity !== null) {
+                                ctx.module.metadata.workforce.capacity = capacity;
+                                ctx.module._workforceCapacity = capacity;
+                            }
+
+                            if (employed !== null) {
+                                ctx.module.metadata.workforce.employed = employed;
+                                ctx.module._workforceEmployed = employed;
+                            }
+                        } else if (state.currentStation) {
+                            const capacity = parseIntSafe(attrs.capacity) ?? parseIntSafe(attrs.max);
+                            const employed = parseIntSafe(attrs.employed) ?? parseIntSafe(attrs.current) ?? parseIntSafe(attrs.active);
+
+                            if (!state.currentStation.metadata.workforce) {
+                                state.currentStation.metadata.workforce = {};
+                            }
+
+                            if (capacity !== null) {
+                                state.currentStation.metadata.workforce.capacity = capacity;
+                            }
+
+                            if (employed !== null) {
+                                state.currentStation.metadata.workforce.employed = employed;
+                            }
+                        }
+
+                        return;
+                    }
+
+                    if (tag === 'blueprint') {
                         state.batches.blueprints.push({
                             blueprint_name: attrs.name || attrs.ware || 'unknown',
                             blueprint_type: attrs.type || 'ship',
@@ -184,11 +515,241 @@ class SavegameParser {
 
                         state.counters.blueprints++;
 
-                        // Batch write
                         if (state.batches.blueprints.length >= BATCH_SIZE && state.savegameId) {
-                            this.db.insertBlueprints(state.savegameId, state.batches.blueprints);
-                            state.batches.blueprints = [];
+                            flushBlueprints();
                         }
+
+                        return;
+                    }
+
+                    if (state.currentStation) {
+                        const station = state.currentStation;
+
+                        if (state.moduleStack.length > 0) {
+                            const ctx = state.moduleStack[state.moduleStack.length - 1];
+                            const childMetadata = buildMetadata(attrs);
+
+                            if (tag === 'offset' || tag === 'rotation') {
+                                if (Object.keys(childMetadata).length) {
+                                    ctx.module.metadata[tag] = childMetadata;
+                                }
+                                return;
+                            }
+
+                            if (tag === 'connection') {
+                                if (Object.keys(childMetadata).length) {
+                                    if (!ctx.module.metadata.connections) {
+                                        ctx.module.metadata.connections = [];
+                                    }
+                                    ctx.module.metadata.connections.push(childMetadata);
+                                }
+                                return;
+                            }
+
+                            if (Object.keys(childMetadata).length) {
+                                if (!ctx.module.metadata.children) {
+                                    ctx.module.metadata.children = [];
+                                }
+                                ctx.module.metadata.children.push({ tag, attrs: childMetadata });
+                            }
+
+                            return;
+                        }
+
+                        if (tag === 'ware') {
+                            const validParents = parentTag ? parentTag.toLowerCase() : null;
+                            const isInventoryContext = validParents === 'cargo' || validParents === 'wares' || validParents === 'supply';
+
+                            if (!isInventoryContext) {
+                                return;
+                            }
+
+                            const quantity = parseIntSafe(attrs.amount) ?? parseIntSafe(attrs.quantity);
+                            const capacity = parseIntSafe(attrs.capacity) ?? parseIntSafe(attrs.max) ?? parseIntSafe(attrs.storage);
+                            const price = parseIntSafe(attrs.price) ?? parseFloatSafe(attrs.price) ?? 0;
+
+                            const metadata = buildMetadata(attrs, ['ware', 'amount', 'quantity', 'capacity', 'max', 'storage', 'price']);
+
+                            if (quantity !== null || capacity !== null || Object.keys(metadata).length) {
+                                const item = {
+                                    ware: attrs.ware,
+                                    quantity: quantity ?? 0,
+                                    capacity: capacity ?? 0,
+                                    price: price || 0
+                                };
+
+                                if (Object.keys(metadata).length) {
+                                    item.metadata = metadata;
+                                }
+
+                                station.inventory.push(item);
+
+                                if (capacity) {
+                                    station._inventoryCapacity = (station._inventoryCapacity || 0) + capacity;
+                                }
+                            }
+
+                            return;
+                        }
+
+                        if ((tag === 'storage' || tag === 'cargo') && attrs.capacity) {
+                            const capacity = parseIntSafe(attrs.capacity) ?? parseIntSafe(attrs.max);
+                            if (capacity) {
+                                station._inventoryCapacity = (station._inventoryCapacity || 0) + capacity;
+                            }
+                        }
+                    }
+                });
+
+                parser.on('closetag', (tag) => {
+                    state.tagStack.pop();
+
+                    if (tag === 'module' || tag === 'entry') {
+                        let ctx = null;
+
+                        for (let i = state.moduleStack.length - 1; i >= 0; i--) {
+                            if (state.moduleStack[i].tag === tag) {
+                                ctx = state.moduleStack.splice(i, 1)[0];
+                                break;
+                            }
+                        }
+
+                        if (!ctx) {
+                            return;
+                        }
+
+                        const station = ctx.station;
+                        const module = ctx.module;
+
+                        if (!station) {
+                            return;
+                        }
+
+                        if (!module.metadata || Object.keys(module.metadata).length === 0) {
+                            module.metadata = {};
+                        }
+
+                        if (ctx.tag === 'entry') {
+                            module.metadata.source = module.metadata.source || 'construction_entry';
+                        }
+
+                        const workforceCapacity = module._workforceCapacity ?? (module.metadata.workforce ? module.metadata.workforce.capacity : null);
+                        const workforceEmployed = module._workforceEmployed ?? (module.metadata.workforce ? module.metadata.workforce.employed : null);
+
+                        if (workforceCapacity !== null) {
+                            station._workforceCapacityFromModules = (station._workforceCapacityFromModules || 0) + workforceCapacity;
+                            module.metadata.workforce = module.metadata.workforce || {};
+                            module.metadata.workforce.capacity = workforceCapacity;
+                        }
+
+                        if (workforceEmployed !== null) {
+                            module.metadata.workforce = module.metadata.workforce || {};
+                            module.metadata.workforce.employed = workforceEmployed;
+                        }
+
+                        const storageEntries = module._storageEntries;
+                        if (Array.isArray(storageEntries) && storageEntries.length > 0) {
+                            const moduleStorage = storageEntries.reduce((sum, entry) => sum + (entry.capacity || 0), 0);
+                            if (moduleStorage > 0) {
+                                station._storageCapacityFromModules = (station._storageCapacityFromModules || 0) + moduleStorage;
+                                station._storageByTag = station._storageByTag || {};
+
+                                storageEntries.forEach((entry) => {
+                                    const capacity = entry.capacity || 0;
+                                    if (!capacity) {
+                                        return;
+                                    }
+
+                                    if (entry.tags && entry.tags.length > 0) {
+                                        entry.tags.forEach((tag) => {
+                                            station._storageByTag[tag] = (station._storageByTag[tag] || 0) + capacity;
+                                        });
+                                    } else {
+                                        station._storageByTag.unclassified = (station._storageByTag.unclassified || 0) + capacity;
+                                    }
+                                });
+                            }
+                        }
+
+                        delete module._workforceCapacity;
+                        delete module._workforceEmployed;
+                        delete module._storageEntries;
+
+                        station.modules.push(module);
+                        return;
+                    }
+
+                    if (tag === 'component') {
+                        const context = state.componentStack.pop();
+                        if (!context) {
+                            return;
+                        }
+
+                        if (context.kind === 'ship') {
+                            state.batches.ships.push(context.data);
+                            state.counters.ships++;
+
+                            if (state.batches.ships.length >= BATCH_SIZE && state.savegameId) {
+                                flushShips();
+                                console.log(chalk.gray(`  Ships: ${state.counters.ships} (batch written)`));
+                            }
+                        } else if (context.kind === 'station') {
+                            const station = context.data;
+
+                            const computedStorage = station.inventory.reduce((sum, item) => sum + (item.capacity || 0), 0);
+                            const storageFromModules = station._storageCapacityFromModules || 0;
+                            const totalStorage = storageFromModules || station._inventoryCapacity || computedStorage;
+                            station.total_storage = totalStorage || station.total_storage || 0;
+                            delete station._inventoryCapacity;
+                            delete station._storageCapacityFromModules;
+
+                            if (station._workforceCapacityFromModules) {
+                                station.total_workforce = station._workforceCapacityFromModules;
+                            }
+                            delete station._workforceCapacityFromModules;
+
+                            station.inventory = station.inventory.map((item) => {
+                                if (item.metadata && Object.keys(item.metadata).length === 0) {
+                                    const clone = { ...item };
+                                    delete clone.metadata;
+                                    return clone;
+                                }
+                                return item;
+                            });
+
+                            if (storageFromModules > 0) {
+                                station.metadata = station.metadata || {};
+                                station.metadata.storage_summary = {
+                                    total_capacity: storageFromModules,
+                                    by_tag: station._storageByTag || {}
+                                };
+                            }
+                            delete station._storageByTag;
+
+                            state.batches.stations.push(station);
+                            state.counters.stations++;
+
+                            if (state.batches.stations.length >= BATCH_SIZE && state.savegameId) {
+                                flushStations();
+                                console.log(chalk.gray(`  Stations: ${state.counters.stations} (batch written)`));
+                            }
+                        }
+
+                        updateCurrentStationReference();
+                        return;
+                    }
+
+                    if (tag === 'sequence' && state.context.sequenceDepth > 0) {
+                        state.context.sequenceDepth--;
+                        return;
+                    }
+
+                    if (tag === 'construction' && state.context.constructionDepth > 0) {
+                        state.context.constructionDepth--;
+                        if (state.context.constructionDepth === 0) {
+                            state.context.sequenceDepth = 0;
+                        }
+                        return;
                     }
                 });
 
@@ -209,15 +770,9 @@ class SavegameParser {
                         }
 
                         // Write remaining batches
-                        if (state.batches.ships.length > 0) {
-                            this.db.insertShips(state.savegameId, state.batches.ships);
-                        }
-                        if (state.batches.stations.length > 0) {
-                            this.db.insertStations(state.savegameId, state.batches.stations);
-                        }
-                        if (state.batches.blueprints.length > 0) {
-                            this.db.insertBlueprints(state.savegameId, state.batches.blueprints);
-                        }
+                        flushShips();
+                        flushStations();
+                        flushBlueprints();
 
                         console.log(chalk.green(`✓ Savegame parsed successfully: ${filename}`));
                         console.log(chalk.gray(`  Ships: ${state.counters.ships}, Stations: ${state.counters.stations}, Blueprints: ${state.counters.blueprints}`));

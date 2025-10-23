@@ -25,6 +25,7 @@ class DatabaseService {
         try {
             this.db = new Database(this.dbPath);
             this.db.pragma('journal_mode = WAL');
+            this.db.pragma('foreign_keys = ON');
             this.createTables();
             console.log(chalk.green(`Database initialized at ${this.dbPath}`));
             return this;
@@ -151,10 +152,9 @@ class DatabaseService {
             const existing = this.getSavegameByFilename(data.filename);
 
             if (existing) {
-                // Delete old ships, stations, blueprints (CASCADE will handle this)
+                // Delete old ships, stations, blueprints (CASCADE will handle related modules and inventory)
                 this.db.prepare('DELETE FROM ships WHERE savegame_id = ?').run(existing.id);
                 this.db.prepare('DELETE FROM stations WHERE savegame_id = ?').run(existing.id);
-                this.db.prepare('DELETE FROM station_modules WHERE station_db_id IN (SELECT id FROM stations WHERE savegame_id = ?)').run(existing.id);
                 this.db.prepare('DELETE FROM blueprints WHERE savegame_id = ?').run(existing.id);
             }
 
@@ -217,9 +217,20 @@ class DatabaseService {
     }
 
     /**
-     * Insert ships for a savegame (batch mode - does not delete existing)
+     * Insert ships for a savegame
      */
-    insertShips(savegameId, ships) {
+    insertShips(savegameId, ships, options = {}) {
+        const { reset = true } = options;
+
+        if (!Array.isArray(ships) || ships.length === 0) {
+            return;
+        }
+
+        if (reset) {
+            const deleteStmt = this.db.prepare('DELETE FROM ships WHERE savegame_id = ?');
+            deleteStmt.run(savegameId);
+        }
+
         const insertStmt = this.db.prepare(`
             INSERT INTO ships (savegame_id, ship_id, ship_name, ship_class, ship_type,
                               sector, hull_health, shield_health, commander, metadata)
@@ -247,9 +258,19 @@ class DatabaseService {
     }
 
     /**
-     * Insert stations for a savegame (batch mode - does not delete existing)
+     * Insert stations for a savegame
      */
-    insertStations(savegameId, stations) {
+    insertStations(savegameId, stations, options = {}) {
+        const { reset = true } = options;
+
+        if (!Array.isArray(stations) || stations.length === 0) {
+            return;
+        }
+
+        if (reset) {
+            const deleteStmt = this.db.prepare('DELETE FROM stations WHERE savegame_id = ?');
+            deleteStmt.run(savegameId);
+        }
 
         const insertStmt = this.db.prepare(`
             INSERT INTO stations (savegame_id, station_id, station_name, owner, sector,
@@ -331,9 +352,19 @@ class DatabaseService {
     }
 
     /**
-     * Insert blueprints for a savegame (batch mode - does not delete existing)
+     * Insert blueprints for a savegame
      */
-    insertBlueprints(savegameId, blueprints) {
+    insertBlueprints(savegameId, blueprints, options = {}) {
+        const { reset = true } = options;
+
+        if (!Array.isArray(blueprints) || blueprints.length === 0) {
+            return;
+        }
+
+        if (reset) {
+            const deleteStmt = this.db.prepare('DELETE FROM blueprints WHERE savegame_id = ?');
+            deleteStmt.run(savegameId);
+        }
 
         const insertStmt = this.db.prepare(`
             INSERT INTO blueprints (savegame_id, blueprint_name, blueprint_type, is_owned, metadata)
