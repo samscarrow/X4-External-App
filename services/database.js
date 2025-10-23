@@ -146,34 +146,50 @@ class DatabaseService {
      * Insert or update savegame metadata
      */
     upsertSavegame(savegameData) {
-        const stmt = this.db.prepare(`
-            INSERT INTO savegames (filename, file_path, file_modified_at, file_size,
-                                  player_name, player_money, playtime_seconds, game_version, metadata)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(filename) DO UPDATE SET
-                parsed_at = CURRENT_TIMESTAMP,
-                file_modified_at = excluded.file_modified_at,
-                file_size = excluded.file_size,
-                player_name = excluded.player_name,
-                player_money = excluded.player_money,
-                playtime_seconds = excluded.playtime_seconds,
-                game_version = excluded.game_version,
-                metadata = excluded.metadata
-        `);
+        const transaction = this.db.transaction((data) => {
+            // Check if savegame already exists
+            const existing = this.getSavegameByFilename(data.filename);
 
-        const info = stmt.run(
-            savegameData.filename,
-            savegameData.file_path,
-            savegameData.file_modified_at,
-            savegameData.file_size,
-            savegameData.player_name,
-            savegameData.player_money,
-            savegameData.playtime_seconds,
-            savegameData.game_version,
-            JSON.stringify(savegameData.metadata || {})
-        );
+            if (existing) {
+                // Delete old ships, stations, blueprints (CASCADE will handle this)
+                this.db.prepare('DELETE FROM ships WHERE savegame_id = ?').run(existing.id);
+                this.db.prepare('DELETE FROM stations WHERE savegame_id = ?').run(existing.id);
+                this.db.prepare('DELETE FROM station_modules WHERE station_db_id IN (SELECT id FROM stations WHERE savegame_id = ?)').run(existing.id);
+                this.db.prepare('DELETE FROM blueprints WHERE savegame_id = ?').run(existing.id);
+            }
 
-        return info.lastInsertRowid || this.getSavegameByFilename(savegameData.filename).id;
+            const stmt = this.db.prepare(`
+                INSERT INTO savegames (filename, file_path, file_modified_at, file_size,
+                                      player_name, player_money, playtime_seconds, game_version, metadata)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(filename) DO UPDATE SET
+                    parsed_at = CURRENT_TIMESTAMP,
+                    file_modified_at = excluded.file_modified_at,
+                    file_size = excluded.file_size,
+                    player_name = excluded.player_name,
+                    player_money = excluded.player_money,
+                    playtime_seconds = excluded.playtime_seconds,
+                    game_version = excluded.game_version,
+                    metadata = excluded.metadata
+                RETURNING id
+            `);
+
+            const result = stmt.get(
+                data.filename,
+                data.file_path,
+                data.file_modified_at,
+                data.file_size,
+                data.player_name,
+                data.player_money,
+                data.playtime_seconds,
+                data.game_version,
+                JSON.stringify(data.metadata || {})
+            );
+
+            return result.id;
+        });
+
+        return transaction(savegameData);
     }
 
     /**
@@ -203,9 +219,17 @@ class DatabaseService {
     /**
      * Insert ships for a savegame
      */
-    insertShips(savegameId, ships) {
-        const deleteStmt = this.db.prepare('DELETE FROM ships WHERE savegame_id = ?');
-        deleteStmt.run(savegameId);
+    insertShips(savegameId, ships, options = {}) {
+        const { reset = true } = options;
+
+        if (!Array.isArray(ships) || ships.length === 0) {
+            return;
+        }
+
+        if (reset) {
+            const deleteStmt = this.db.prepare('DELETE FROM ships WHERE savegame_id = ?');
+            deleteStmt.run(savegameId);
+        }
 
         const insertStmt = this.db.prepare(`
             INSERT INTO ships (savegame_id, ship_id, ship_name, ship_class, ship_type,
@@ -236,9 +260,17 @@ class DatabaseService {
     /**
      * Insert stations for a savegame
      */
-    insertStations(savegameId, stations) {
-        const deleteStmt = this.db.prepare('DELETE FROM stations WHERE savegame_id = ?');
-        deleteStmt.run(savegameId);
+    insertStations(savegameId, stations, options = {}) {
+        const { reset = true } = options;
+
+        if (!Array.isArray(stations) || stations.length === 0) {
+            return;
+        }
+
+        if (reset) {
+            const deleteStmt = this.db.prepare('DELETE FROM stations WHERE savegame_id = ?');
+            deleteStmt.run(savegameId);
+        }
 
         const insertStmt = this.db.prepare(`
             INSERT INTO stations (savegame_id, station_id, station_name, owner, sector,
@@ -322,9 +354,17 @@ class DatabaseService {
     /**
      * Insert blueprints for a savegame
      */
-    insertBlueprints(savegameId, blueprints) {
-        const deleteStmt = this.db.prepare('DELETE FROM blueprints WHERE savegame_id = ?');
-        deleteStmt.run(savegameId);
+    insertBlueprints(savegameId, blueprints, options = {}) {
+        const { reset = true } = options;
+
+        if (!Array.isArray(blueprints) || blueprints.length === 0) {
+            return;
+        }
+
+        if (reset) {
+            const deleteStmt = this.db.prepare('DELETE FROM blueprints WHERE savegame_id = ?');
+            deleteStmt.run(savegameId);
+        }
 
         const insertStmt = this.db.prepare(`
             INSERT INTO blueprints (savegame_id, blueprint_name, blueprint_type, is_owned, metadata)

@@ -23,7 +23,7 @@ import {
 } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome'
 import PerfectScrollbar from 'vue3-perfect-scrollbar'
-import 'vue3-perfect-scrollbar/dist/vue3-perfect-scrollbar.css'
+import 'vue3-perfect-scrollbar/style.css'
 import Helper from "./helper";
 import AppUpgrader from "./appUpgrader";
 import GlobalStore from "./globalStore";

@@ -1,18 +1,18 @@
 # X4 External App - Windows Setup Script
 # This script helps you configure the application for Windows
 
-Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host "===================================================================" -ForegroundColor Cyan
 Write-Host "   X4 External App - Windows Setup Wizard" -ForegroundColor Cyan
-Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host "===================================================================" -ForegroundColor Cyan
 Write-Host ""
 
 # Check if Node.js is installed
 Write-Host "Checking prerequisites..." -ForegroundColor Yellow
 try {
     $nodeVersion = node --version
-    Write-Host "✓ Node.js found: $nodeVersion" -ForegroundColor Green
+    Write-Host "OK Node.js found: $nodeVersion" -ForegroundColor Green
 } catch {
-    Write-Host "✗ Node.js not found!" -ForegroundColor Red
+    Write-Host "ERROR Node.js not found!" -ForegroundColor Red
     Write-Host "  Please install Node.js from: https://nodejs.org" -ForegroundColor Red
     Write-Host "  Then run this script again." -ForegroundColor Red
     Read-Host "Press Enter to exit"
@@ -21,9 +21,9 @@ try {
 
 try {
     $npmVersion = npm --version
-    Write-Host "✓ npm found: v$npmVersion" -ForegroundColor Green
+    Write-Host "OK npm found: v$npmVersion" -ForegroundColor Green
 } catch {
-    Write-Host "✗ npm not found!" -ForegroundColor Red
+    Write-Host "ERROR npm not found!" -ForegroundColor Red
     exit 1
 }
 
@@ -34,20 +34,20 @@ Write-Host "Searching for X4 savegame directories..." -ForegroundColor Yellow
 $savegameDirs = Get-ChildItem "$env:USERPROFILE\Documents\Egosoft\X4\*\save" -Directory -ErrorAction SilentlyContinue
 
 if ($savegameDirs.Count -eq 0) {
-    Write-Host "✗ No X4 savegame directories found!" -ForegroundColor Red
+    Write-Host "ERROR No X4 savegame directories found!" -ForegroundColor Red
     Write-Host "  Expected location: $env:USERPROFILE\Documents\Egosoft\X4\<PlayerID>\save" -ForegroundColor Yellow
     Write-Host ""
     Write-Host "Please enter your X4 savegame path manually:" -ForegroundColor Cyan
     $savegamePath = Read-Host "Savegame path"
 
     if (-not (Test-Path $savegamePath)) {
-        Write-Host "✗ Path does not exist: $savegamePath" -ForegroundColor Red
+        Write-Host "ERROR Path does not exist: $savegamePath" -ForegroundColor Red
         Read-Host "Press Enter to exit"
         exit 1
     }
 } elseif ($savegameDirs.Count -eq 1) {
     $savegamePath = $savegameDirs[0].FullName
-    Write-Host "✓ Found savegame directory:" -ForegroundColor Green
+    Write-Host "OK Found savegame directory:" -ForegroundColor Green
     Write-Host "  $savegamePath" -ForegroundColor White
 
     # Check for savegame files
@@ -58,7 +58,7 @@ if ($savegameDirs.Count -eq 0) {
         Write-Host "  Latest: $($latestSave.Name) ($($latestSave.LastWriteTime))" -ForegroundColor Gray
     }
 } else {
-    Write-Host "✓ Found multiple savegame directories:" -ForegroundColor Green
+    Write-Host "OK Found multiple savegame directories:" -ForegroundColor Green
     Write-Host ""
 
     for ($i = 0; $i -lt $savegameDirs.Count; $i++) {
@@ -83,9 +83,9 @@ if ($savegameDirs.Count -eq 0) {
             throw "Invalid selection"
         }
         $savegamePath = $savegameDirs[$index].FullName
-        Write-Host "✓ Selected: $savegamePath" -ForegroundColor Green
+        Write-Host "OK Selected: $savegamePath" -ForegroundColor Green
     } catch {
-        Write-Host "✗ Invalid selection!" -ForegroundColor Red
+        Write-Host "ERROR Invalid selection!" -ForegroundColor Red
         Read-Host "Press Enter to exit"
         exit 1
     }
@@ -96,17 +96,7 @@ Write-Host ""
 # Create .env file
 Write-Host "Creating configuration file..." -ForegroundColor Yellow
 
-$envContent = @"
-# Application host (use 0.0.0.0 to allow access from other devices on your network)
-APP_HOST=127.0.0.1
-
-# Application port - if busy, it will try to find a free one
-APP_PORT=8080
-
-# X4 Savegame Path - Path to your X4 Foundations savegame directory
-# Automatically configured by setup script
-X4_SAVEGAME_PATH=$savegamePath
-"@
+$envContent = "# Application host (use 0.0.0.0 to allow access from other devices on your network)`r`nAPP_HOST=127.0.0.1`r`n`r`n# Application port - if busy, it will try to find a free one`r`nAPP_PORT=8080`r`n`r`n# X4 Savegame Path - Path to your X4 Foundations savegame directory`r`n# Automatically configured by setup script`r`nX4_SAVEGAME_PATH=$savegamePath`r`n"
 
 $envPath = ".env"
 
@@ -116,12 +106,12 @@ if (Test-Path $envPath) {
     if ($overwrite -ne "y" -and $overwrite -ne "Y") {
         Write-Host "  Skipping .env creation" -ForegroundColor Gray
     } else {
-        $envContent | Out-File -FilePath $envPath -Encoding UTF8
-        Write-Host "✓ Created .env file" -ForegroundColor Green
+        Set-Content -Path $envPath -Value $envContent -NoNewline
+        Write-Host "OK Created .env file" -ForegroundColor Green
     }
 } else {
-    $envContent | Out-File -FilePath $envPath -Encoding UTF8
-    Write-Host "✓ Created .env file" -ForegroundColor Green
+    Set-Content -Path $envPath -Value $envContent -NoNewline
+    Write-Host "OK Created .env file" -ForegroundColor Green
 }
 
 Write-Host ""
@@ -135,20 +125,20 @@ if (-not (Test-Path "node_modules")) {
     npm install
 
     if ($LASTEXITCODE -eq 0) {
-        Write-Host "✓ Dependencies installed successfully" -ForegroundColor Green
+        Write-Host "OK Dependencies installed successfully" -ForegroundColor Green
     } else {
-        Write-Host "✗ Failed to install dependencies" -ForegroundColor Red
+        Write-Host "ERROR Failed to install dependencies" -ForegroundColor Red
         Read-Host "Press Enter to exit"
         exit 1
     }
 } else {
-    Write-Host "✓ Dependencies already installed" -ForegroundColor Green
+    Write-Host "OK Dependencies already installed" -ForegroundColor Green
 }
 
 Write-Host ""
-Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host "===================================================================" -ForegroundColor Cyan
 Write-Host "   Setup Complete!" -ForegroundColor Green
-Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host "===================================================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Configuration:" -ForegroundColor Yellow
 Write-Host "  Savegame path: $savegamePath" -ForegroundColor White

@@ -48,7 +48,7 @@ export default defineConfig({
             scss: {
                 charset: false,
                 additionalData: `
-                    @import "./src/scss/user/_user-variables.scss";           
+                    @import "@/scss/user/_user-variables.scss";
                 `,
             }
         }
