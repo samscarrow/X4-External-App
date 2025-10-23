@@ -25,6 +25,7 @@ class DatabaseService {
         try {
             this.db = new Database(this.dbPath);
             this.db.pragma('journal_mode = WAL');
+            this.db.pragma('foreign_keys = ON');
             this.createTables();
             console.log(chalk.green(`Database initialized at ${this.dbPath}`));
             return this;
@@ -151,10 +152,9 @@ class DatabaseService {
             const existing = this.getSavegameByFilename(data.filename);
 
             if (existing) {
-                // Delete old ships, stations, blueprints (CASCADE will handle this)
+                // Delete old ships, stations, blueprints (CASCADE will handle related modules and inventory)
                 this.db.prepare('DELETE FROM ships WHERE savegame_id = ?').run(existing.id);
                 this.db.prepare('DELETE FROM stations WHERE savegame_id = ?').run(existing.id);
-                this.db.prepare('DELETE FROM station_modules WHERE station_db_id IN (SELECT id FROM stations WHERE savegame_id = ?)').run(existing.id);
                 this.db.prepare('DELETE FROM blueprints WHERE savegame_id = ?').run(existing.id);
             }
 

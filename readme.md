@@ -1,412 +1,191 @@
 # X4 External App
 
-External dashboard for X4: Foundations that displays real-time game data on separate devices (monitors, tablets, smartphones).
-
-![X4 External App](https://img.shields.io/badge/X4-Foundations-blue)
-![Node.js](https://img.shields.io/badge/Node.js-16+-green)
-![Vue.js](https://img.shields.io/badge/Vue.js-3-brightgreen)
-
-## Features
+External app for X4 Foundations game.
 
-### Real-time Dashboard Widgets
-- **Player Profile** - Name, faction, location, credits
-- **Active Mission** - Current mission details and objectives
-- **Mission Offers** - Available missions with filtering
-- **Logbook** - Real-time game events with search
-- **Player Goals** - User-defined goals with drag-to-prioritize
-- **Factions** - Faction relationships and licenses
-- **Current Research** - Active research progress
-- **Transaction Log** - Financial transactions
-- **Savegame Info** ⭐ NEW - Ships, stations, and blueprints from savegames
+![X4 External App main screen](https://i.imgur.com/d2tnx9s.png)
 
-### Savegame Parser Integration (NEW!)
+Shows real-time logbook entries, mission offers, currently active mission details and player information.  
+Application is served on a local port, so it can be run locally or on multiple network devices at once.  
+Created to be displayed on an external device (monitor, tablet or smartphone).
 
-Automatically parse your X4 savegames to track:
-- **Ships** - Fleet overview with health status
-- **Stations** - Station empire with modules and inventory
-- **Blueprints** - Known ship and station blueprints
-- **Historical Data** - Track your empire growth over time
+Note: lua module supports only Windows, so currently it will run exclusevly on this platform.
 
-Features:
-- 🔄 **Automatic parsing** - Detects new savegames and parses automatically
-- 💾 **SQLite database** - Persistent storage for historical analysis
-- 🌐 **REST API** - Access game state data programmatically
-- 📊 **Interactive UI** - Browse ships, stations, and blueprints
-- 🤖 **AI Copilot Ready** - Foundation for intelligent game assistance
+## One time setup
 
-### Customizable Layout
-- 1-4 column layouts
-- Drag-and-drop widget arrangement
-- Adjustable font sizes
-- Fullscreen mode
-- Compact mode for higher information density
-- Auto-hide header
-- Widget height limiting
+1. Install *Http client library for X4 Foundation* mod by *djfhe*  
+   https://github.com/djfhe/x4_http  
+  _Since this mod is still in beta, you need to navigate to the main page of the repository. Above the list of files, click Code and Download ZIP.  
+   Then extract contents of the zip file to `\extensions` directory - and rename `x4_http-main` folder to `djfhe_http`_.
 
-### Internationalization
-- English
-- Russian
-- Easily extensible for more languages
+   The folder structure should be:
 
-### Export/Import Settings
-- Export settings to JSON file
-- Import settings from file
-- Preserve your layout and preferences
+   ```
+   \extensions
+       \djfhe_http
+           \content.xml
+           \...
+   ```
+  
 
-## Quick Start
+2. Install *X4 External App* mod  
+   https://www.nexusmods.com/x4foundations/mods/818
 
-### Windows (Recommended)
+3. Download *X4 External App server*   
+   https://github.com/mycumycu/X4-External-App/releases
 
-**Automated Setup:**
-```powershell
-# 1. Install Node.js from https://nodejs.org
-# 2. Clone/download this repository
-# 3. Run the setup script:
-.\setup-windows.ps1
-```
+4. Disable `Protected UI Mode` in game's Settings > Extensions menu.
 
-The script will:
-- Check prerequisites
-- Find your X4 savegame directory automatically
-- Create the `.env` configuration file
-- Install dependencies
-- Offer to start the application
 
-**Manual Setup:**
+That's it, you should be good to go.
 
-See [WINDOWS_SETUP.md](WINDOWS_SETUP.md) for detailed instructions.
+## Running the X4 External App
+### Windows
+1. Start the *X4 External App* server (`x4_external_app.exe`). Don't close it during playing.
+2. Start the game and load your save file.
 
-### Linux / macOS
+*X4 External App* will serve application on a local port. If default port (8080) is busy - a new, free one will be found.
+> In case of used port different from 8080 - also update the port setting the mod config file located in `\extensions\mycu_external_app\ui\config.lua`
 
-```bash
-# Install dependencies
-npm install
+App will automatically open in the default browser.
 
-# Configure savegame path (optional)
-cp .env.example .env
-# Edit .env and set X4_SAVEGAME_PATH
+If you want to access it from a local network - change `localhost` to local IP address of a machine running X4, e.g. `http://192.168.1.120:8080`.  
+Application will detect and output the exact network address in a console window.
 
-# Run development server
-npm run dev
-```
+### Linux (using Steam Proton version)
+1. Configure your X4 to run using proton (Steam Compatibility mode)
+> **WARNING** For some reason X4 won't sync saves between windows and linux using Steam cloud.
+> 
+> I reccommend temporarely disabling Steam Cloud for X4, copying the save files over from your linux folder: `~/config/EgoSoft/X4/` to windows folder `~/.steam/steam/steamapps/compatdata/392160/pfx/drive_c/users/steamuser/Documents/Egosoft/X4/`.  Latter folder might not exists berfore you first launch X4 in compatibility mode. Once you've done this and launched the game once, you can enable Steam Cloud sync again.
+2. Start the *X4 External App* server (`x4_external_app_linux`). Don't close it during playing.
+3. Start the game and load your save file.
+4. Open http://localhost:8080/ in your browser.
 
-### WSL (Windows Subsystem for Linux)
 
-**Note:** File watching may not work in WSL2 due to cross-filesystem limitations. We recommend running natively on Windows for the best experience.
+## Useful X4 launch params
+There are two **optional** but quite useful X4 parameters working when game looses focus:
 
-If using WSL, see [WINDOWS_SETUP.md](WINDOWS_SETUP.md) for WSL-specific considerations.
+   - **-nosoundthrottle** makes game keep playing music
+   - **-nocputhrottle** game usess full CPU
 
-## Configuration
+   Thanks to it interacting with external monitor feels like a part of the game.  
+   You can apply one or all of them: https://help.steampowered.com/en/faqs/view/7D01-D2DD-D75E-2955   
 
-### Environment Variables
+## Layout
 
-Create a `.env` file in the project root:
+### Application layout
 
-```env
-# Application host
-APP_HOST=127.0.0.1
+User can freely define app layout. To open the configuration screen, press the layout icon ![layout icon](https://i.imgur.com/DsukxhO.png)   
 
-# Application port (auto-finds free port if busy)
-APP_PORT=8080
+![layout screen](https://i.imgur.com/uUMZgEz.png)
 
-# X4 Savegame Path (optional - enables savegame parsing)
-# Windows: C:\Users\YourName\Documents\Egosoft\X4\12345678\save
-# Linux:   /home/username/.steam/steam/steamapps/compatdata/392160/pfx/drive_c/users/steamuser/Documents/Egosoft/X4/12345678/save
-X4_SAVEGAME_PATH=
-```
+It's possible to define number of columns and its width.  
+Also, by dragging widgets into appropriate columns, one can set their order.   
 
-### Game Mod Configuration
+If the "limit widget heights" option is checked - each widget can have "max height" property defined - application will then automatically adjust the height of the widget within the viewport height.  
 
-The app receives data from the X4 game via HTTP POST requests. You need to install a companion mod in X4:
+All changes made are stored automatically.
 
-1. Install the **mycu_external_app** extension in your X4 `extensions` folder
-2. Configure the extension's `config.lua` to point to your server:
-   - Host: `127.0.0.1`
-   - Port: `8080` (or your configured port)
+  
+### App font size
 
-## Usage
+Clicking ![Font size icon](https://i.imgur.com/neFE6wC.png) icon switches between different font sizes. 
 
-### Starting the Application
+## Settings import/export
 
-**Development mode:**
-```bash
-npm run dev
-```
+You can export and import the application's settings.
 
-**Production build:**
-```bash
-npm run build
-npm start
-```
+Where to find it:
+- Open the layout configuration screen by clicking the layout icon ![layout icon](https://i.imgur.com/DsukxhO.png).
+- In the layout settings, find the "Manage settings" / "Settings" section and use the `Export settings` and `Import settings` buttons.
 
-**Windows executable:**
-```bash
-npm run package:win
-# Creates: dist/x4_external_app.exe
-```
+Export:
+- Saves all application settings into a `x4ea-settings.json` file.
+- The file is standard JSON and can be backed up or moved to another device/browser.
 
-**Linux executable:**
-```bash
-npm run package:linux
-# Creates: dist/x4_external_app_linux
-```
-
-### Accessing the Dashboard
-
-1. Open your browser to `http://localhost:8080`
-2. Configure your layout using the settings (⚙️) icon
-3. Drag widgets from "Available widgets" to columns
-4. Launch X4 Foundations and load a game
-5. Data will appear automatically
-
-### Multi-Device Access
-
-To access from other devices (tablets, phones):
-
-1. Set `APP_HOST=0.0.0.0` in `.env`
-2. Find your computer's IP address
-3. On other device, navigate to `http://<your-ip>:8080`
-
-## Savegame Parser Features
-
-### Automatic Parsing
-
-When configured, the app automatically:
-1. Watches your X4 savegame directory
-2. Detects new savegame files
-3. Parses them in the background (2-10 seconds)
-4. Updates the database
-5. Refreshes the UI
-
-### REST API
-
-Access savegame data via API:
-
-```bash
-# Get all parsed savegames
-GET /api/savegames
-
-# Get latest savegame
-GET /api/savegames/latest
-
-# Get complete savegame data (ships, stations, blueprints)
-GET /api/savegames/:id
-
-# Get ships only
-GET /api/savegames/:id/ships
-
-# Get stations with modules and inventory
-GET /api/savegames/:id/stations
-
-# Get blueprints
-GET /api/savegames/:id/blueprints
-
-# Manually trigger parsing
-POST /api/savegames/parse
-Body: { "filePath": "path/to/savegame.xml.gz" }
-
-# Parse most recent savegame
-POST /api/savegames/parse-latest
-```
-
-### Database
-
-Parsed data is stored in SQLite database at `data/x4_savegame.db`
-
-Tables:
-- `savegames` - Savegame metadata
-- `ships` - Player ships
-- `stations` - Player stations
-- `station_modules` - Station modules (production, storage, etc.)
-- `inventory` - Station inventory (wares)
-- `blueprints` - Known blueprints
-
-## Documentation
-
-- **[WINDOWS_SETUP.md](WINDOWS_SETUP.md)** - Detailed Windows setup guide
-- **[SAVEGAME_INTEGRATION.md](SAVEGAME_INTEGRATION.md)** - Savegame parser technical documentation
-- **API Documentation** - See SAVEGAME_INTEGRATION.md for API details
-
-## Architecture
-
-```
-┌─────────────────────────────────────────┐
-│  X4 Foundations Game                    │
-│  ├── HTTP Mod (real-time data)          │
-│  └── Savegame Files (periodic state)    │
-└───────────────┬─────────────────────────┘
-                │
-                ▼
-┌─────────────────────────────────────────┐
-│  X4 External App Server (Node.js)       │
-│  ├── Express.js Backend                 │
-│  ├── Savegame Parser                    │
-│  ├── File Watcher                       │
-│  └── SQLite Database                    │
-└───────────────┬─────────────────────────┘
-                │
-                ▼
-┌─────────────────────────────────────────┐
-│  Vue.js 3 Frontend                      │
-│  ├── Dashboard Widgets                  │
-│  ├── Customizable Layout                │
-│  └── Real-time Updates                  │
-└─────────────────────────────────────────┘
-```
-
-## Technology Stack
-
-**Backend:**
-- Node.js + Express.js
-- better-sqlite3 (database)
-- fast-xml-parser (savegame parsing)
-- chokidar (file watching)
-
-**Frontend:**
-- Vue.js 3 (Composition API)
-- Vite (build tool)
-- Bootstrap 5 (styling)
-- Vuex 4 (state management)
-- Vue-i18n (internationalization)
-
-## Development
-
-### Prerequisites
-- Node.js 16+ and npm
-- Git (optional)
-
-### Setup
-```bash
-# Clone repository
-git clone https://github.com/samscarrow/X4-External-App.git
-cd X4-External-App
-
-# Install dependencies
-npm install
-
-# Create .env file
-cp .env.example .env
-# Edit .env with your configuration
-
-# Start development server
-npm run dev
-```
-
-### Project Structure
-```
-X4-External-App/
-├── services/              # Backend services
-│   ├── database.js        # SQLite database service
-│   ├── savegameParser.js  # Savegame parsing logic
-│   └── savegameWatcher.js # File watching service
-├── src/                   # Frontend source
-│   ├── components/        # Shared UI components
-│   ├── widgets/           # Dashboard widgets
-│   │   ├── player_profile/
-│   │   ├── savegame_info/ # NEW: Savegame widget
-│   │   └── ...
-│   ├── lang/              # Translations
-│   └── scss/              # Styles
-├── server.js              # Express.js server
-├── vite.config.js         # Vite configuration
-└── package.json           # Dependencies
-```
-
-### Adding a New Widget
-
-1. Create widget directory in `src/widgets/`
-2. Create `YourWidgetWidget.vue` component
-3. Add translation keys to `src/lang/en.json` and `src/lang/ru.json`
-4. Register in `src/widgetConfig.js`
-5. Widget will appear in available widgets list
-
-## Roadmap
-
-### ✅ Phase 1: Savegame Parser Integration (COMPLETE)
-- Automatic savegame parsing
-- SQLite database storage
-- REST API endpoints
-- Savegame Info widget
-
-### 🔄 Phase 2: Real-time Event Streaming (IN PROGRESS)
-- Integrate X4-rest-server for live game events
-- WebSocket support for real-time push updates
-- Trade event tracking
-- Combat event tracking
-
-### 📋 Phase 3: Game Metadata Integration
-- Integrate X4FProjector for game data
-- Ware statistics and pricing
-- Ship specifications
-- Module data
-
-### 📊 Phase 4: Advanced Analytics
-- Production efficiency tracking
-- Trade flow visualization
-- Market trend analysis
-- Station profitability reports
-
-### 🤖 Phase 5: AI Copilot
-- LLM integration (Claude API, OpenAI)
-- Natural language queries about game state
-- AI-powered recommendations
-- Automated insights and alerts
-
-## Troubleshooting
-
-### Widget shows "Waiting for connection"
-- Ensure X4 is running with a save loaded
-- Check that the game mod is installed and configured correctly
-- Verify the port in mod config matches `.env` APP_PORT
-
-### Savegame parsing not working
-- Check that `X4_SAVEGAME_PATH` is set in `.env`
-- Verify the path exists and contains `.xml.gz` files
-- Check server console for error messages
-- Try manual parsing via API
-
-### Port already in use
-- App will automatically find a free port
-- Check console output for the actual port
-- Update game mod config if port changed
-
-See [WINDOWS_SETUP.md](WINDOWS_SETUP.md) for more troubleshooting tips.
-
-## Contributing
-
-Contributions are welcome! Areas for improvement:
-
-- New widgets (trading, fleet management, mining)
-- Parser improvements (extract more data)
-- UI enhancements (charts, graphs, visualizations)
-- Translation to other languages
-- Performance optimizations
-
-## Credits
-
-**Original X4-External-App:**
-- Author: Mycu (mycumycu)
-- Repository: https://github.com/mycumycu/X4-External-App
-
-**Savegame Parser Integration:**
-- Inspired by: Mistralys/x4-savegame-parser
-- Contributors: Claude (AI assistant)
-
-**Related Projects:**
-- Alia5/X4-rest-server - REST server for X4 (future integration)
-- bno1/X4FProjector - Game data extractor (future integration)
-- SirNukes Mod Support APIs - X4 modding framework
-
-## License
-
-Same as original X4-External-App project.
-
-## Support
-
-- GitHub Issues: https://github.com/samscarrow/X4-External-App/issues
-- Documentation: See `*.md` files in repository
-- X4 Forums: Check Egosoft forums for X4 mod support
-
----
-
-**Fly safe, Commander!** 🚀
+Import:
+- Pick a previously exported `x4ea-settings.json` file. The app validates the file before applying it.
+- If valid, the import will overwrite all current settings and the app will reload to apply them.
+
+Notes and troubleshooting:
+- Import will replace all existing settings. Consider exporting first to create a backup.
+- If import fails, ensure you are using a file exported by this app and that it wasn't manually edited.
+
+## Widgets
+
+### Logbook
+
+![X4 External App UI elements](https://i.imgur.com/gopHNqi.png)
+
+App UI supports unrestricted filtering the latest logbook entries.  
+
+You can also define phrases that should be excluded or feartured in logbook panel.
+To define such phrases, click on clog icon: ![X4 External App clog icon](https://i.imgur.com/KQGSIIO.png) - setting window will open.  
+
+![X4 External App UI elements](https://i.imgur.com/Z9nw0Xa.png)
+
+Possible settings for each rule include:
+
+* on/off toggle - defines if a certain rule is enabled
+* phrase - phrase to look for. All phrases are case-insensitive.
+* type - excluded means that an entry containing such a phrase will not be displayed, while highlighted means that it will be marked with a color.
+* blink - makes entry's title blinking
+* title only - when disabled, search will consider also message text and a faction name
+
+Important logbook messages (e.g. property under attack or being destroyed) will automatically blink catching attention.  
+All changes are stored automatically.  
+  
+### Mission offers
+Mission offers can be filtered similarly to logbook entries.  
+Also, you can define which mission difficulties should be displayed.
+To do so - just click on the clog icon: ![X4 External App clog icon](https://i.imgur.com/KQGSIIO.png)   
+Setting window will open.  
+
+### Player goals
+![Player goals](https://i.imgur.com/xhaJ0LC.png)  
+
+You can define and add your own goals. Just type it and press the enter key (or dedicated button).
+Each goal can be moved higher or lower in priority or even moved to another list by dragging.
+
+You can also highlight selected goals with one of a few preselected icons. 
+To do that, select the "make featured" option from a goal (three dot) menu. The exclamation icon will appear. To switch it, just click on the icon until desired one appears.
+
+After completing a goal and making it "checked" - it will fade out and will be removed in a few seconds. Unchecking the goal within that time cancels the removal operation.
+
+### Factions
+![Factions](https://i.imgur.com/GcuOrQj.png)  
+
+Shows all factions and their relations with the player.
+
+If a player has a military or capital ship licence with a faction - it will be displayed as a green bar above the faction name.  
+When a faction relation changes, its name will blink and the recent relation change value will be displayed in the top right of a faction name.
+
+Widget settings alow to:
+* exlude factions from the grid
+* exclude certain relation levels
+* hide recent relation changes
+* hide licence indicators
+ 
+## How it works
+
+External App mod *(MD + LUA)* collects and sends data to *(Node.js)* server that serves it to a (Vue.js) SPA application.  
+A **big thanks to djfhe** for creating _Http client library_ mod that allows communication between game and REST server.
+
+SPA application was created with *Vue.js (v3)* using *Bootstrap (v5)* and all data is provided dynamically.
+
+## Making sever executable from source
+
+In order to build the executable of X4 External App server yourself:
+
+1. Clone this repo with the command:  
+   `git clone https://github.com/mycumycu/X4-External-App.git`
+2. Change dir:  
+   `cd x4_external_app`
+3. Install packages:  
+   `npm install`
+4. Create *.env.* file from existing *.env.example* file  
+   `copy .env.example .env`
+5. Build exe with:  
+   `npm run package:win` (if windows) or  `npm run package:linux` (if linux)
+
+Output executable will be created in `\dist` folder
+

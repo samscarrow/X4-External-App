@@ -703,13 +703,8 @@ class SavegameParser {
                             delete station._inventoryCapacity;
                             delete station._storageCapacityFromModules;
 
-                            const computedWorkforce = station.modules.reduce((sum, module) => {
-                                const capacity = module.metadata && module.metadata.workforce ? module.metadata.workforce.capacity : null;
-                                return sum + (capacity || 0);
-                            }, 0);
-                            const totalWorkforce = station._workforceCapacityFromModules || computedWorkforce;
-                            if (totalWorkforce) {
-                                station.total_workforce = totalWorkforce;
+                            if (station._workforceCapacityFromModules) {
+                                station.total_workforce = station._workforceCapacityFromModules;
                             }
                             delete station._workforceCapacityFromModules;
 

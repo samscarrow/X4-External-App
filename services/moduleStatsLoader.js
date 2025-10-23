@@ -139,12 +139,7 @@ class ModuleStatsLoader {
         }
 
         const parsed = Number(str);
-        if (Number.isFinite(parsed)) {
-            return parsed;
-        }
-
-        const intParsed = parseInt(str, 10);
-        return Number.isFinite(intParsed) ? intParsed : null;
+        return Number.isFinite(parsed) ? parsed : null;
     }
 
     buildIndex() {
