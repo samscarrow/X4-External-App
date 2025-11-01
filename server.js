@@ -12,6 +12,7 @@ const hostname = process.env.APP_HOST || '127.0.0.1';
 const port = process.env.APP_PORT || 8080;
 
 const chalk = require('chalk');
+const compression = require('compression');
 const { version } = require("./package.json");
 
 const isPackaged = !!process.pkg;
@@ -26,6 +27,20 @@ const SavegameWatcher = require('./services/savegameWatcher');
 app.use(bodyParser.json({ limit: '50mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
 
+// Enable gzip compression for all responses
+app.use(compression({
+    threshold: 1024,  // Only compress responses larger than 1kb
+    level: 6          // Compression level (1-9, 6 is default)
+}));
+
+// Add response caching headers
+app.use((req, res, next) => {
+    if (req.method === 'GET') {
+        res.set('Cache-Control', 'public, max-age=5');
+    }
+    next();
+});
+
 class Server {
     dataObject = null;
     updatePending = false;
@@ -39,8 +54,18 @@ class Server {
         this.hostname = hostname;
         this.port = port;
 
+        // Performance optimization: Request queuing and debouncing
+        this.updateQueue = [];
+        this.lastProcessTime = 0;
+        this.minProcessInterval = 2000;  // 2 seconds between processing
+        this.lastFileWrite = 0;
+        this.fileWriteInterval = 10000;  // 10 seconds between file writes
+
         // Initialize savegame services
         this.initializeSavegameServices();
+
+        // Start queue processor
+        this.startQueueProcessor();
     }
 
     /**
@@ -70,6 +95,65 @@ class Server {
             }
         } catch (error) {
             console.error(chalk.red('Failed to initialize savegame services:'), error);
+        }
+    }
+
+    /**
+     * Start the queue processor
+     * Processes updates at controlled intervals
+     */
+    startQueueProcessor() {
+        this.queueProcessorInterval = setInterval(() => {
+            this.processQueuedUpdates();
+        }, this.minProcessInterval);
+
+        this.outputMessage(chalk.green('Queue processor started (debounce: 2s)'));
+    }
+
+    /**
+     * Process queued updates in batch
+     */
+    processQueuedUpdates() {
+        if (this.updateQueue.length === 0) return;
+
+        const now = Date.now();
+
+        // Check if enough time has passed since last process
+        if (now - this.lastProcessTime < this.minProcessInterval) {
+            return;
+        }
+
+        // Take the latest update (most recent data)
+        const latestUpdate = this.updateQueue[this.updateQueue.length - 1];
+
+        // Clear the queue
+        const queueSize = this.updateQueue.length;
+        this.updateQueue = [];
+
+        // Update data object
+        this.dataObject = latestUpdate;
+        this.lastProcessTime = now;
+
+        // Write to file only if enough time has passed
+        if (!isPackaged && (now - this.lastFileWrite) >= this.fileWriteInterval) {
+            this.writeDevDataFile();
+            this.lastFileWrite = now;
+        }
+
+        this.outputMessage(chalk.gray(`Processed ${queueSize} queued update(s)`));
+    }
+
+    /**
+     * Write dev data file (debounced)
+     */
+    writeDevDataFile() {
+        if (!this.dataObject) return;
+
+        try {
+            fs.writeFileSync(devFilePath, JSON.stringify(this.dataObject, null, 2));
+            this.outputMessage(chalk.gray(`Dev data written (debounced)`));
+        } catch (e) {
+            console.error(chalk.red(`Failed to write ${devFilePath}:`), e);
         }
     }
 
@@ -187,24 +271,18 @@ class Server {
         });
 
         /**
-         * Handle incoming data from X4
+         * Handle incoming data from X4 (OPTIMIZED)
+         * Queues updates for batch processing instead of immediate processing
          */
         this.app.post('/api/data', (request, response) => {
-            this.dataObject = request.body;
+            // Queue the update instead of processing immediately
+            this.updateQueue.push(request.body);
 
-            if (!isPackaged) {
-                try {
-                    if (!fs.existsSync(devFilePath) && this.dataObject != null) {
-                        // In local env: create dev-data.json
-                        fs.writeFileSync(devFilePath, JSON.stringify(this.dataObject, null, 2));
-                        this.outputMessage(chalk.green(`Development data file created at ${devFilePath}`));
-                    }
-                } catch (e) {
-                    console.error(chalk.red(`Failed to write ${devFilePath}:`), e);
-                }
-            }
-
-            response.send('ok');
+            // Respond immediately (don't block on processing)
+            response.status(200).json({
+                status: 'queued',
+                queue_size: this.updateQueue.length
+            });
         });
 
         /**
