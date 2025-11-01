@@ -47,7 +47,8 @@ class SavegameParser {
                         blueprints: []
                     },
                     currentSector: 'Unknown Sector',  // Track current sector context
-                    sectorStack: []  // Track sector hierarchy
+                    sectorStack: [],  // Track sector hierarchy
+                    currentShip: null  // Track current ship being parsed
                 };
 
                 const BATCH_SIZE = 500;
@@ -83,8 +84,13 @@ class SavegameParser {
                     const tag = node.name;
                     const attrs = node.attributes;
 
+                    // Capture sector from <source> tag (for ships with AI jobs)
+                    if (tag === 'source' && state.currentShip && attrs.sector) {
+                        state.currentShip.sector = attrs.sector;
+                    }
+
                     // Capture sector context
-                    if (tag === 'sector') {
+                    else if (tag === 'sector') {
                         const sectorId = attrs.id || 'Unknown Sector';
                         state.sectorStack.push(sectorId);
                         state.currentSector = sectorId;
@@ -118,12 +124,12 @@ class SavegameParser {
 
                         // Ship
                         if (componentClass === 'ship' || macro.includes('ship')) {
-                            state.batches.ships.push({
+                            state.currentShip = {
                                 ship_id: attrs.id || attrs.code || 'unknown',
                                 ship_name: attrs.name || 'Unnamed Ship',
                                 ship_class: componentClass || 'ship',
                                 ship_type: macro || 'unknown',
-                                sector: state.currentSector,  // Use sector from parent context
+                                sector: state.currentSector,  // Default to parent context, will be updated from <source> if available
                                 hull_health: attrs.hull != null ? parseFloat(attrs.hull) : null,
                                 shield_health: attrs.shield != null ? parseFloat(attrs.shield) : null,
                                 commander: attrs.commander || null,
@@ -136,9 +142,7 @@ class SavegameParser {
                                         z: attrs.z
                                     }
                                 }
-                            });
-
-                            state.counters.ships++;
+                            };
 
                             // Batch write
                             if (state.batches.ships.length >= BATCH_SIZE && state.savegameId) {
@@ -203,6 +207,20 @@ class SavegameParser {
 
                 // Handle closing tags
                 parser.on('closetag', (tagName) => {
+                    // When component closes, add ship to batch if one is being tracked
+                    if (tagName === 'component' && state.currentShip) {
+                        state.batches.ships.push(state.currentShip);
+                        state.counters.ships++;
+                        state.currentShip = null;  // Reset for next ship
+
+                        // Batch write
+                        if (state.batches.ships.length >= BATCH_SIZE && state.savegameId) {
+                            this.db.insertShips(state.savegameId, state.batches.ships);
+                            console.log(chalk.gray(`  Ships: ${state.counters.ships} (batch written)`));
+                            state.batches.ships = [];
+                        }
+                    }
+
                     // Pop sector context when exiting sector tag
                     if (tagName === 'sector') {
                         state.sectorStack.pop();
