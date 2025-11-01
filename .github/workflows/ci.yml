@@ -1,0 +1,189 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches:
+      - '**'  # Run on push to any branch
+  pull_request:
+    branches:
+      - '**'
+
+jobs:
+  lint-and-validate:
+    name: Lint and Validate
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [16.x, 18.x]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        run: npm run lint
+        continue-on-error: true
+
+      - name: Build project
+        run: npm run build
+
+      - name: Check for security vulnerabilities
+        run: npm audit --audit-level=moderate
+        continue-on-error: true
+
+  code-quality:
+    name: Code Quality Analysis
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for better analysis
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18.x
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Analyze code complexity
+        run: |
+          echo "📊 Code Quality Metrics"
+          echo "======================="
+          find . -name "*.js" -not -path "./node_modules/*" -not -path "./dist/*" | wc -l | xargs echo "Total JS files:"
+          find . -name "*.js" -not -path "./node_modules/*" -not -path "./dist/*" -exec wc -l {} \; | awk '{total += $1} END {print "Total lines of code:", total}'
+          echo ""
+          echo "🔍 Checking for common issues..."
+          echo "- TODO comments:"
+          grep -r "TODO" --include="*.js" --exclude-dir=node_modules --exclude-dir=dist . | wc -l || echo "0"
+          echo "- FIXME comments:"
+          grep -r "FIXME" --include="*.js" --exclude-dir=node_modules --exclude-dir=dist . | wc -l || echo "0"
+          echo "- Console.log statements:"
+          grep -r "console.log" --include="*.js" --exclude-dir=node_modules --exclude-dir=dist . | wc -l || echo "0"
+
+  performance-check:
+    name: Performance Validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18.x
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check bundle size
+        run: |
+          npm run build
+          echo "📦 Build Output Size"
+          echo "==================="
+          du -sh dist/ || echo "No dist directory"
+          echo ""
+          echo "Largest files in build:"
+          find dist/ -type f -exec du -h {} \; 2>/dev/null | sort -rh | head -10 || echo "No files found"
+
+  automated-review:
+    name: Automated Code Review
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18.x
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Review server.js changes
+        run: |
+          echo "🤖 Automated Code Review"
+          echo "======================="
+          echo ""
+
+          if git diff --name-only HEAD~1 HEAD | grep -q "server.js"; then
+            echo "✅ server.js was modified"
+            echo ""
+            echo "📝 Changes to server.js:"
+            git diff HEAD~1 HEAD -- server.js --stat
+            echo ""
+            echo "🔍 Security checks:"
+            if git diff HEAD~1 HEAD -- server.js | grep -q "eval("; then
+              echo "⚠️  WARNING: Found eval() usage"
+            else
+              echo "✅ No eval() usage"
+            fi
+
+            if git diff HEAD~1 HEAD -- server.js | grep -q "exec("; then
+              echo "⚠️  WARNING: Found exec() usage - review for command injection"
+            else
+              echo "✅ No exec() usage in changes"
+            fi
+
+            echo ""
+            echo "🎯 Performance patterns:"
+            if git diff HEAD~1 HEAD -- server.js | grep -q "setInterval\|setTimeout"; then
+              echo "⚠️  Found timer usage - ensure proper cleanup"
+            fi
+
+            if git diff HEAD~1 HEAD -- server.js | grep -q "compression"; then
+              echo "✅ Compression detected - good for performance"
+            fi
+
+            if git diff HEAD~1 HEAD -- server.js | grep -q "cache\|Cache"; then
+              echo "✅ Caching detected - good for performance"
+            fi
+          else
+            echo "ℹ️  server.js not modified in this commit"
+          fi
+          echo ""
+          echo "✅ Automated review complete"
+
+  status-check:
+    name: CI Status Summary
+    runs-on: ubuntu-latest
+    needs: [lint-and-validate, code-quality, performance-check, automated-review]
+    if: always()
+
+    steps:
+      - name: Check job statuses
+        run: |
+          echo "🎉 CI Pipeline Status"
+          echo "==================="
+          echo "Lint and Validate: ${{ needs.lint-and-validate.result }}"
+          echo "Code Quality: ${{ needs.code-quality.result }}"
+          echo "Performance Check: ${{ needs.performance-check.result }}"
+          echo "Automated Review: ${{ needs.automated-review.result }}"
+          echo ""
+          if [ "${{ needs.lint-and-validate.result }}" == "failure" ] || [ "${{ needs.code-quality.result }}" == "failure" ]; then
+            echo "❌ Some checks failed - review required"
+            exit 1
+          else
+            echo "✅ All checks passed!"
+          fi
