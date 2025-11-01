@@ -18,6 +18,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "lint": "eslint . --ext .js --ignore-pattern node_modules/ --ignore-pattern dist/ --ignore-pattern dev-dist/",
+    "lint:fix": "eslint . --ext .js --fix --ignore-pattern node_modules/ --ignore-pattern dist/ --ignore-pattern dev-dist/",
     "package:linux": "npm run build && pkg . --targets node16-linux-x64 --output dist/x4_external_app_linux",
     "package:win": "npm run build && pkg . --targets node16-win-x64 --output dist/x4_external_app.exe"
   },
@@ -53,6 +55,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.1",
+    "eslint": "^9.39.0",
     "sass": "^1.87.0",
     "vite": "^7.1.11",
     "vite-plugin-pwa": "^1.1.0"
