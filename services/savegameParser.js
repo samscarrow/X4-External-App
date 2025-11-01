@@ -48,7 +48,10 @@ class SavegameParser {
                     },
                     currentSector: 'Unknown Sector',  // Track current sector context
                     sectorStack: [],  // Track sector hierarchy
-                    currentShip: null  // Track current ship being parsed
+                    currentZone: null,  // Track current zone ID
+                    zoneStack: [],  // Track zone hierarchy
+                    currentShip: null,  // Track current ship being parsed
+                    currentStation: null  // Track current station being parsed
                 };
 
                 const BATCH_SIZE = 500;
@@ -94,6 +97,13 @@ class SavegameParser {
                         const sectorId = attrs.id || 'Unknown Sector';
                         state.sectorStack.push(sectorId);
                         state.currentSector = sectorId;
+                    }
+
+                    // Capture zone context
+                    else if (tag === 'zone' && attrs.id) {
+                        const zoneId = attrs.id;
+                        state.zoneStack.push(zoneId);
+                        state.currentZone = zoneId;
                     }
 
                     // Capture info
@@ -152,13 +162,13 @@ class SavegameParser {
                             }
                         }
 
-                        // Station (simplified - no nested data to avoid memory issues)
+                        // Station
                         else if (componentClass === 'station' || macro.includes('station')) {
-                            state.batches.stations.push({
+                            state.currentStation = {
                                 station_id: attrs.id || attrs.code || 'unknown',
                                 station_name: attrs.name || 'Unnamed Station',
                                 owner: attrs.owner || 'Unknown',
-                                sector: state.currentSector,  // Use sector from parent context
+                                sector: state.currentSector,  // Capture current sector
                                 position_x: parseFloat(attrs.x || 0),
                                 position_y: parseFloat(attrs.y || 0),
                                 position_z: parseFloat(attrs.z || 0),
@@ -168,18 +178,10 @@ class SavegameParser {
                                 inventory: [],
                                 metadata: {
                                     race: attrs.race,
-                                    purpose: attrs.purpose
+                                    purpose: attrs.purpose,
+                                    zone: state.currentZone  // Also track zone
                                 }
-                            });
-
-                            state.counters.stations++;
-
-                            // Batch write
-                            if (state.batches.stations.length >= BATCH_SIZE && state.savegameId) {
-                                this.db.insertStations(state.savegameId, state.batches.stations);
-                                console.log(chalk.gray(`  Stations: ${state.counters.stations} (batch written)`));
-                                state.batches.stations = [];
-                            }
+                            };
                         }
                     }
 
@@ -207,18 +209,39 @@ class SavegameParser {
 
                 // Handle closing tags
                 parser.on('closetag', (tagName) => {
-                    // When component closes, add ship to batch if one is being tracked
-                    if (tagName === 'component' && state.currentShip) {
-                        state.batches.ships.push(state.currentShip);
-                        state.counters.ships++;
-                        state.currentShip = null;  // Reset for next ship
+                    // When component closes, add ship or station to batch if one is being tracked
+                    if (tagName === 'component') {
+                        if (state.currentShip) {
+                            state.batches.ships.push(state.currentShip);
+                            state.counters.ships++;
+                            state.currentShip = null;  // Reset for next ship
 
-                        // Batch write
-                        if (state.batches.ships.length >= BATCH_SIZE && state.savegameId) {
-                            this.db.insertShips(state.savegameId, state.batches.ships);
-                            console.log(chalk.gray(`  Ships: ${state.counters.ships} (batch written)`));
-                            state.batches.ships = [];
+                            // Batch write
+                            if (state.batches.ships.length >= BATCH_SIZE && state.savegameId) {
+                                this.db.insertShips(state.savegameId, state.batches.ships);
+                                console.log(chalk.gray(`  Ships: ${state.counters.ships} (batch written)`));
+                                state.batches.ships = [];
+                            }
+                        } else if (state.currentStation) {
+                            state.batches.stations.push(state.currentStation);
+                            state.counters.stations++;
+                            state.currentStation = null;  // Reset for next station
+
+                            // Batch write
+                            if (state.batches.stations.length >= BATCH_SIZE && state.savegameId) {
+                                this.db.insertStations(state.savegameId, state.batches.stations);
+                                console.log(chalk.gray(`  Stations: ${state.counters.stations} (batch written)`));
+                                state.batches.stations = [];
+                            }
                         }
+                    }
+
+                    // Pop zone context when exiting zone tag
+                    if (tagName === 'zone') {
+                        state.zoneStack.pop();
+                        state.currentZone = state.zoneStack.length > 0
+                            ? state.zoneStack[state.zoneStack.length - 1]
+                            : null;
                     }
 
                     // Pop sector context when exiting sector tag
