@@ -45,7 +45,9 @@ class SavegameParser {
                         ships: [],
                         stations: [],
                         blueprints: []
-                    }
+                    },
+                    currentSector: 'Unknown Sector',  // Track current sector context
+                    sectorStack: []  // Track sector hierarchy
                 };
 
                 const BATCH_SIZE = 500;
@@ -81,8 +83,15 @@ class SavegameParser {
                     const tag = node.name;
                     const attrs = node.attributes;
 
+                    // Capture sector context
+                    if (tag === 'sector') {
+                        const sectorName = attrs.name || 'Unknown Sector';
+                        state.sectorStack.push(sectorName);
+                        state.currentSector = sectorName;
+                    }
+
                     // Capture info
-                    if (tag === 'info') {
+                    else if (tag === 'info') {
                         state.savegameInfo.playtime_seconds = parseInt(attrs.playtime || 0);
                         state.savegameInfo.game_version = attrs.version || 'Unknown';
                         state.savegameInfo.metadata.save_time = attrs.save || null;
@@ -114,7 +123,7 @@ class SavegameParser {
                                 ship_name: attrs.name || 'Unnamed Ship',
                                 ship_class: componentClass || 'ship',
                                 ship_type: macro || 'unknown',
-                                sector: attrs.sector || 'Unknown Sector',
+                                sector: state.currentSector,  // Use sector from parent context
                                 hull_health: attrs.hull != null ? parseFloat(attrs.hull) : null,
                                 shield_health: attrs.shield != null ? parseFloat(attrs.shield) : null,
                                 commander: attrs.commander || null,
@@ -145,7 +154,7 @@ class SavegameParser {
                                 station_id: attrs.id || attrs.code || 'unknown',
                                 station_name: attrs.name || 'Unnamed Station',
                                 owner: attrs.owner || 'Unknown',
-                                sector: attrs.sector || 'Unknown Sector',
+                                sector: state.currentSector,  // Use sector from parent context
                                 position_x: parseFloat(attrs.x || 0),
                                 position_y: parseFloat(attrs.y || 0),
                                 position_z: parseFloat(attrs.z || 0),
@@ -189,6 +198,18 @@ class SavegameParser {
                             this.db.insertBlueprints(state.savegameId, state.batches.blueprints);
                             state.batches.blueprints = [];
                         }
+                    }
+                });
+
+                // Handle closing tags
+                parser.on('closetag', (tagName) => {
+                    // Pop sector context when exiting sector tag
+                    if (tagName === 'sector') {
+                        state.sectorStack.pop();
+                        // Restore previous sector or default to Unknown
+                        state.currentSector = state.sectorStack.length > 0
+                            ? state.sectorStack[state.sectorStack.length - 1]
+                            : 'Unknown Sector';
                     }
                 });
 
