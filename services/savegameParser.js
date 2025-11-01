@@ -85,9 +85,9 @@ class SavegameParser {
 
                     // Capture sector context
                     if (tag === 'sector') {
-                        const sectorName = attrs.name || 'Unknown Sector';
-                        state.sectorStack.push(sectorName);
-                        state.currentSector = sectorName;
+                        const sectorId = attrs.id || 'Unknown Sector';
+                        state.sectorStack.push(sectorId);
+                        state.currentSector = sectorId;
                     }
 
                     // Capture info
