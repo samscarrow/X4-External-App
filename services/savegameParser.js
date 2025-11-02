@@ -50,6 +50,7 @@ class SavegameParser {
                     sectorStack: [],  // Track sector hierarchy
                     currentZone: null,  // Track current zone ID
                     zoneStack: [],  // Track zone hierarchy
+                    componentStack: [],  // Track component types for proper closing
                     currentShip: null,  // Track current ship being parsed
                     currentStation: null  // Track current station being parsed
                 };
@@ -92,20 +93,6 @@ class SavegameParser {
                         state.currentShip.sector = attrs.sector;
                     }
 
-                    // Capture sector context
-                    else if (tag === 'sector') {
-                        const sectorId = attrs.id || 'Unknown Sector';
-                        state.sectorStack.push(sectorId);
-                        state.currentSector = sectorId;
-                    }
-
-                    // Capture zone context
-                    else if (tag === 'zone' && attrs.id) {
-                        const zoneId = attrs.id;
-                        state.zoneStack.push(zoneId);
-                        state.currentZone = zoneId;
-                    }
-
                     // Capture info
                     else if (tag === 'info') {
                         state.savegameInfo.playtime_seconds = parseInt(attrs.playtime || 0);
@@ -127,13 +114,30 @@ class SavegameParser {
                         }
                     }
 
-                    // Capture components (ships/stations)
+                    // Capture components (ships/stations/sectors/zones)
                     else if (tag === 'component') {
                         const componentClass = attrs.class;
                         const macro = attrs.macro || '';
 
+                        // Track component type for proper closing
+                        state.componentStack.push(componentClass);
+
+                        // Sector component
+                        if (componentClass === 'sector' && attrs.id) {
+                            const sectorId = attrs.id;
+                            state.sectorStack.push(sectorId);
+                            state.currentSector = sectorId;
+                        }
+
+                        // Zone component
+                        else if (componentClass === 'zone' && attrs.id) {
+                            const zoneId = attrs.id;
+                            state.zoneStack.push(zoneId);
+                            state.currentZone = zoneId;
+                        }
+
                         // Ship
-                        if (componentClass === 'ship' || macro.includes('ship')) {
+                        else if (componentClass === 'ship' || macro.includes('ship')) {
                             state.currentShip = {
                                 ship_id: attrs.id || attrs.code || 'unknown',
                                 ship_name: attrs.name || 'Unnamed Ship',
@@ -209,48 +213,48 @@ class SavegameParser {
 
                 // Handle closing tags
                 parser.on('closetag', (tagName) => {
-                    // When component closes, add ship or station to batch if one is being tracked
+                    // When component closes, check what type it was
                     if (tagName === 'component') {
-                        if (state.currentShip) {
+                        const componentClass = state.componentStack.pop();
+
+                        // Handle ship component closing
+                        if (componentClass === 'ship' && state.currentShip) {
                             state.batches.ships.push(state.currentShip);
                             state.counters.ships++;
-                            state.currentShip = null;  // Reset for next ship
+                            state.currentShip = null;
 
-                            // Batch write
                             if (state.batches.ships.length >= BATCH_SIZE && state.savegameId) {
                                 this.db.insertShips(state.savegameId, state.batches.ships);
                                 console.log(chalk.gray(`  Ships: ${state.counters.ships} (batch written)`));
                                 state.batches.ships = [];
                             }
-                        } else if (state.currentStation) {
+                        }
+                        // Handle station component closing
+                        else if (componentClass === 'station' && state.currentStation) {
                             state.batches.stations.push(state.currentStation);
                             state.counters.stations++;
-                            state.currentStation = null;  // Reset for next station
+                            state.currentStation = null;
 
-                            // Batch write
                             if (state.batches.stations.length >= BATCH_SIZE && state.savegameId) {
                                 this.db.insertStations(state.savegameId, state.batches.stations);
                                 console.log(chalk.gray(`  Stations: ${state.counters.stations} (batch written)`));
                                 state.batches.stations = [];
                             }
                         }
-                    }
-
-                    // Pop zone context when exiting zone tag
-                    if (tagName === 'zone') {
-                        state.zoneStack.pop();
-                        state.currentZone = state.zoneStack.length > 0
-                            ? state.zoneStack[state.zoneStack.length - 1]
-                            : null;
-                    }
-
-                    // Pop sector context when exiting sector tag
-                    if (tagName === 'sector') {
-                        state.sectorStack.pop();
-                        // Restore previous sector or default to Unknown
-                        state.currentSector = state.sectorStack.length > 0
-                            ? state.sectorStack[state.sectorStack.length - 1]
-                            : 'Unknown Sector';
+                        // Handle zone component closing
+                        else if (componentClass === 'zone') {
+                            state.zoneStack.pop();
+                            state.currentZone = state.zoneStack.length > 0
+                                ? state.zoneStack[state.zoneStack.length - 1]
+                                : null;
+                        }
+                        // Handle sector component closing
+                        else if (componentClass === 'sector') {
+                            state.sectorStack.pop();
+                            state.currentSector = state.sectorStack.length > 0
+                                ? state.sectorStack[state.sectorStack.length - 1]
+                                : 'Unknown Sector';
+                        }
                     }
                 });
 
