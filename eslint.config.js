@@ -1,5 +1,5 @@
-// ESLint 9.x flat config format
-export default [
+// ESLint 9.x flat config format (CommonJS)
+module.exports = [
     {
         ignores: [
             'node_modules/**',

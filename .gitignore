@@ -8,3 +8,11 @@ dist-ssr
 .env
 .vscode
 dev-data.json
+# Database and data files
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# Log files
+logs/
