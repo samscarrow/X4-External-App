@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Co-captain command bridge: executes commands the External App server
+  piggybacks on its /api/data reply. ui/ea.lua parses that reply and raises
+  one UI-triggered event per command; the cues below perform the visible
+  action. Action names/attributes validated against the game's
+  libraries/common.xsd (X4 v9.x): show_notification takes `text`;
+  write_to_logbook takes `category`, `title`, `text`.
+-->
+<mdscript name="CoCaptainBridge" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <cues>
+        <cue name="CoCaptain_OnNotify" instantiate="true">
+            <conditions>
+                <event_ui_triggered screen="'CoCaptainBridge'" control="'notify'" />
+            </conditions>
+            <actions>
+                <show_notification text="event.param3.{'text'}" />
+            </actions>
+        </cue>
+        <cue name="CoCaptain_OnLogbook" instantiate="true">
+            <conditions>
+                <event_ui_triggered screen="'CoCaptainBridge'" control="'logbook'" />
+            </conditions>
+            <actions>
+                <write_to_logbook category="general" title="event.param3.{'title'}" text="event.param3.{'text'}" />
+            </actions>
+        </cue>
+    </cues>
+</mdscript>

@@ -1,9 +1,11 @@
 # Co-Captain Command Bridge Protocol
 
 The write path that lets the co-captain talk back *inside* X4. The server side and MCP
-tools are implemented and tested in this repo; the game side is a small patch to the
-`mycu_external_app` extension (distributed separately via Nexus/Steam, not in this repo),
-documented here for wiring up on the gaming machine.
+tools are implemented and tested in this repo. The game side is a small patch to the
+`mycu_external_app` extension, shipped in this repo under
+`game-extension/mycu_external_app/` and installed with `game-extension/install-bridge.ps1`
+(re-run it after updating the mod from Nexus/GitHub — updates overwrite the patched
+`ui\ea.lua`).
 
 ## How it works
 
@@ -40,72 +42,65 @@ missing bridge is diagnosable rather than silent.
 The MCP tools `notify_player`, `write_logbook`, `get_command_queue`, and `cancel_command`
 wrap these.
 
-## Game-side integration (to be wired on the gaming PC)
+## Game-side integration (implemented)
 
-> **Status: sketch, not shipped.** The extension's Lua source isn't in this repo, and the
-> exact function names below need validating against the installed mod and current game
-> version (9.x has changed base Lua files repeatedly; mind Protected UI Mode). Once the
-> extension files are available, this is a ~30-line change.
+> **Status: implemented and schema-validated.** The files live in
+> `game-extension/mycu_external_app/` (based on mycu_external_app v361 / app v3.6.1) and
+> are copied over the installed mod by `install-bridge.ps1`. Action names and attributes
+> were validated against `libraries/md.xsd` + `libraries/common.xsd` extracted from the
+> game's 08.cat (X4 v9.x). Protected UI Mode must be disabled (djfhe_http loads DLLs).
 
-### 1. Lua: handle the POST response
+### 1. Lua: handle the POST response (`ui/ea.lua`)
 
-In the extension's update loop, where the data POST completes, parse the body and forward
-each command to Mission Director via a UI event, then ack:
+The stock extension already ends every telemetry cycle with the `/api/data` POST callback.
+The patch adds three functions and one call in that callback:
 
-```lua
--- after the /api/data POST returns `responseText`:
-local ok, reply = pcall(function () return json.decode(responseText) end)
-if ok and reply and reply.commands and #reply.commands > 0 then
-    local ackIds = {}
-    for _, command in ipairs(reply.commands) do
-        -- Hand off to MD; UI Lua stays dumb, MD does game-state work
-        AddUITriggeredEvent("CoCaptainBridge", command.type, command.payload)
-        table.insert(ackIds, command.id)
-    end
-    -- POST /api/commands/ack with { ids = ackIds } using the same HTTP
-    -- mechanism the extension uses for /api/data
-end
-```
+- `external.handleServerReply(response)` — `response:getJson()` (djfhe_http's parsed
+  body), iterate `reply.commands`, collect executed ids, ack.
+- `external.executeCommand(command)` — per-type validation and dispatch:
+  `AddUITriggeredEvent("CoCaptainBridge", "notify"|"logbook", payloadTable)`. Commands
+  with missing/invalid payloads (or unknown types) are **not acked**, so they stay
+  `delivered` on the server and are diagnosable via `get_command_queue`.
+- `external.ackCommands(ids)` — `POST /api/commands/ack` with `{ ids = ... }` using the
+  same djfhe_http request API as the data POST (tables are JSON-encoded with
+  `Content-Type: application/json` automatically).
 
-### 2. Mission Director: execute commands
+### 2. Mission Director: execute commands (`md/cocaptain_bridge.xml`)
 
-A small MD script (`md/cocaptain_bridge.xml` in the extension) listens for the UI events
-and performs the visible action. MD is the right layer: it can write logbook entries, show
-notifications, and later (Phase 4) issue real orders.
+Listens for the UI events and performs the visible action. MD is the right layer: it can
+write logbook entries, show notifications, and later (Phase 5) issue real orders.
+
+Actual schema-validated actions (the originally sketched
+`show_notification caption=... details=...` does **not** exist in the game schema):
 
 ```xml
-<?xml version="1.0" encoding="utf-8"?>
-<mdscript name="CoCaptainBridge" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-  <cues>
-    <cue name="OnNotify" instantiate="true">
-      <conditions>
-        <event_ui_triggered screen="'CoCaptainBridge'" control="'notify'" />
-      </conditions>
-      <actions>
-        <show_notification caption="'Co-captain'" details="event.param3.{'text'}" />
-      </actions>
-    </cue>
-    <cue name="OnLogbook" instantiate="true">
-      <conditions>
-        <event_ui_triggered screen="'CoCaptainBridge'" control="'logbook'" />
-      </conditions>
-      <actions>
-        <write_to_logbook category="general"
-                          title="event.param3.{'title'}"
-                          text="event.param3.{'text'}" />
-      </actions>
-    </cue>
-  </cues>
-</mdscript>
+<cue name="CoCaptain_OnNotify" instantiate="true">
+  <conditions>
+    <event_ui_triggered screen="'CoCaptainBridge'" control="'notify'" />
+  </conditions>
+  <actions>
+    <show_notification text="event.param3.{'text'}" />
+  </actions>
+</cue>
+<cue name="CoCaptain_OnLogbook" instantiate="true">
+  <conditions>
+    <event_ui_triggered screen="'CoCaptainBridge'" control="'logbook'" />
+  </conditions>
+  <actions>
+    <write_to_logbook category="general" title="event.param3.{'title'}" text="event.param3.{'text'}" />
+  </actions>
+</cue>
 ```
 
-(Exact attribute names for `show_notification`/`write_to_logbook` should be checked
-against the game's `libraries/md.xsd` on the gaming PC.)
+`show_notification` accepts `text` (required) plus optional `timeout`, `priority`,
+`sound`; `write_to_logbook` requires `category` (one of general/missions/news/upkeep/
+diplomacy/alerts) and `title`. `event.param3` carries the Lua payload table.
 
 ## Safety posture
 
 - Command types are allowlisted server-side (`notify`, `logbook` only); unknown types are
   rejected at enqueue, so the MCP layer cannot smuggle arbitrary instructions to MD.
 - Queue is capped at 20 pending so a missing bridge can't accumulate unbounded backlog.
-- Phase 4 (real fleet orders) will extend the type allowlist deliberately, one command at
-  a time, each with its own MD cue.
+- Phase 5 (real fleet orders) will extend the type allowlist deliberately, one command at
+  a time, each with its own MD cue, keeping an advise-by-default posture: the co-captain
+  only enqueues an order on the player's explicit ask.
