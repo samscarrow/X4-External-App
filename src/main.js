@@ -22,7 +22,7 @@ import {
     faUserFriends
 } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome'
-import PerfectScrollbar from 'vue3-perfect-scrollbar'
+import { PerfectScrollbarPlugin } from 'vue3-perfect-scrollbar'
 import 'vue3-perfect-scrollbar/style.css'
 import Helper from "./helper";
 import AppUpgrader from "./appUpgrader";
@@ -80,6 +80,6 @@ app.config.globalProperties.widgetConfig = WidgetConfig
 app.config.unwrapInjectedRef = true
 app.component('font-awesome-icon', FontAwesomeIcon)
 app.use(GlobalStore)
-app.use(PerfectScrollbar, { options: { suppressScrollX: true, scrollYMarginOffset: 40 } })
+app.use(PerfectScrollbarPlugin, { options: { suppressScrollX: true, scrollYMarginOffset: 40 } })
 app.use(i18n)
 app.mount('#app')
