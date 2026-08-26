@@ -133,8 +133,23 @@ class DatabaseService {
             )
         `);
 
+        // Events journal - the co-captain's persistent record of everything
+        // the live-data differ observes (X4 has no journal files of its own)
+        this.db.exec(`
+            CREATE TABLE IF NOT EXISTS events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at DATETIME DEFAULT (STRFTIME('%Y-%m-%d %H:%M:%f', 'NOW')),
+                type TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                data TEXT
+            )
+        `);
+
         // Create indexes
         this.db.exec(`
+            CREATE INDEX IF NOT EXISTS idx_events_type ON events(type);
+            CREATE INDEX IF NOT EXISTS idx_events_severity ON events(severity);
+            CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at);
             CREATE INDEX IF NOT EXISTS idx_ships_savegame ON ships(savegame_id);
             CREATE INDEX IF NOT EXISTS idx_stations_savegame ON stations(savegame_id);
             CREATE INDEX IF NOT EXISTS idx_modules_station ON station_modules(station_db_id);
@@ -451,6 +466,97 @@ class DatabaseService {
             stations: this.getStations(savegameId),
             blueprints: this.getBlueprints(savegameId)
         };
+    }
+
+    /**
+     * Persist one co-captain event to the journal.
+     * `event` carries {type, severity, ...payload}; payload is stored as JSON.
+     */
+    insertEvent(event) {
+        const { type, severity, ...payload } = event;
+        const result = this.db.prepare(
+            'INSERT INTO events (type, severity, data) VALUES (?, ?, ?)'
+        ).run(type, severity, JSON.stringify(payload));
+        return result.lastInsertRowid;
+    }
+
+    /**
+     * Search the events journal. All filters optional:
+     *  after_id      only events with id > after_id (cursor for long-polling)
+     *  since/until   ISO or 'YYYY-MM-DD HH:MM:SS' bounds on created_at (UTC)
+     *  types         array of event types
+     *  min_severity  'info' | 'notable' | 'urgent'
+     *  q             substring match against the JSON payload and type
+     *  limit         max rows (default 100), newest first unless after_id set
+     */
+    searchEvents({ after_id, since, until, types, min_severity, q, limit = 100 } = {}) {
+        const SEVERITY_RANK = { info: 0, notable: 1, urgent: 2 };
+        const where = [];
+        const params = [];
+
+        if (after_id != null) { where.push('id > ?'); params.push(after_id); }
+        if (since) { where.push('created_at >= ?'); params.push(this.toSqlDate(since)); }
+        if (until) { where.push('created_at <= ?'); params.push(this.toSqlDate(until)); }
+        if (Array.isArray(types) && types.length > 0) {
+            where.push(`type IN (${types.map(() => '?').join(',')})`);
+            params.push(...types);
+        }
+        if (min_severity && SEVERITY_RANK[min_severity] != null) {
+            const allowed = Object.keys(SEVERITY_RANK)
+                .filter((sev) => SEVERITY_RANK[sev] >= SEVERITY_RANK[min_severity]);
+            where.push(`severity IN (${allowed.map(() => '?').join(',')})`);
+            params.push(...allowed);
+        }
+        if (q) {
+            where.push('(data LIKE ? OR type LIKE ?)');
+            params.push(`%${q}%`, `%${q}%`);
+        }
+
+        // Cursor reads page forward (oldest first) so callers can advance;
+        // ad hoc searches read newest first.
+        const order = after_id != null ? 'ASC' : 'DESC';
+        const sql = `SELECT id, created_at, type, severity, data FROM events` +
+            (where.length ? ` WHERE ${where.join(' AND ')}` : '') +
+            ` ORDER BY id ${order} LIMIT ?`;
+        params.push(Math.min(Math.max(1, limit), 1000));
+
+        return this.db.prepare(sql).all(...params).map((row) => ({
+            id: row.id,
+            created_at: row.created_at,
+            type: row.type,
+            severity: row.severity,
+            ...JSON.parse(row.data || '{}'),
+        }));
+    }
+
+    /**
+     * Highest event id in the journal (0 when empty) - long-poll cursor seed
+     */
+    getLatestEventId() {
+        const row = this.db.prepare('SELECT MAX(id) AS id FROM events').get();
+        return row?.id ?? 0;
+    }
+
+    /**
+     * Event counts grouped by severity since a given time (for /api/status)
+     */
+    getEventCounts(since = null) {
+        const sql = 'SELECT severity, COUNT(*) AS count FROM events' +
+            (since ? ' WHERE created_at >= ?' : '') +
+            ' GROUP BY severity';
+        const rows = since
+            ? this.db.prepare(sql).all(this.toSqlDate(since))
+            : this.db.prepare(sql).all();
+        return Object.fromEntries(rows.map((row) => [row.severity, row.count]));
+    }
+
+    /**
+     * Normalize an ISO timestamp to SQLite's UTC text format
+     */
+    toSqlDate(value) {
+        const date = new Date(value);
+        if (isNaN(date.getTime())) return String(value);
+        return date.toISOString().replace('T', ' ').replace('Z', '');
     }
 
     /**

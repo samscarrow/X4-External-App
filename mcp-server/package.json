@@ -1,7 +1,7 @@
 {
   "name": "x4-cocaptain-mcp",
-  "version": "0.3.0",
-  "description": "Standalone stdio MCP server exposing X4-External-App live game data, the savegame SQLite database, a severity-tiered event long-poll, text-to-speech, and the in-game command queue — the X4 co-captain bridge.",
+  "version": "0.4.0",
+  "description": "Standalone stdio MCP server exposing X4-External-App live game data, the savegame SQLite database, a severity-tiered event long-poll, text-to-speech, and the in-game command queue \u2014 the X4 co-captain bridge.",
   "type": "module",
   "main": "index.js",
   "engines": {
@@ -9,7 +9,8 @@
   },
   "scripts": {
     "start": "node index.js",
-    "smoke": "node smoke.js"
+    "smoke": "node smoke.js",
+    "test": "node --test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",

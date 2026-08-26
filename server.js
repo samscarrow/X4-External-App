@@ -23,6 +23,10 @@ const devFilePath = path.join(runtimeDir, 'dev-data.json');
 const DatabaseService = require('./services/database');
 const SavegameParser = require('./services/savegameParser');
 const SavegameWatcher = require('./services/savegameWatcher');
+const { EventDiffer } = require('./utils/eventClassifier');
+
+// Game considered offline after this long without a data POST
+const GAME_STALE_MS = 15000;
 
 app.use(bodyParser.json({ limit: '50mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
@@ -42,6 +46,9 @@ class Server {
     commandQueue = [];
     commandHistory = [];
     nextCommandId = 1;
+    differ = new EventDiffer();
+    lastPostAt = null;
+    startedAt = Date.now();
 
     constructor (app, hostname, port) {
         this.app = app;
@@ -101,6 +108,36 @@ class Server {
         }
 
         return Array.from(map.values()).sort((a, b) => (b.time || 0) - (a.time || 0));
+    }
+
+    /**
+     * Run the event differ over a snapshot (null = game offline) and persist
+     * whatever it produces to the events journal.
+     */
+    recordEvents (gameData) {
+        if (!this.db) return;
+        try {
+            const latestSavegame = this.db.getLatestSavegame() ?? null;
+            for (const event of this.differ.diff(gameData, latestSavegame)) {
+                this.db.insertEvent(event);
+            }
+        } catch (error) {
+            console.error(chalk.red('Failed to record events:'), error);
+        }
+    }
+
+    /**
+     * Watchdog: when the game stops posting, record the offline transition
+     * (and pick up savegame_parsed events while no data POSTs arrive).
+     */
+    startStaleWatchdog () {
+        setInterval(() => {
+            const stale = !this.lastPostAt || (Date.now() - this.lastPostAt) > GAME_STALE_MS;
+            if (stale && this.differ.initialized) {
+                this.recordEvents(null);
+            }
+        }, 5000).unref();
+        return this;
     }
 
     /**
@@ -266,6 +303,10 @@ class Server {
             // Merge new data with existing
             this.dataObject = { ...this.dataObject, ...newData };
 
+            // Journal: diff this snapshot against the last and persist events
+            this.lastPostAt = Date.now();
+            this.recordEvents(this.dataObject);
+
             if (!isPackaged) {
                 try {
                     if (!fs.existsSync(devFilePath) && this.dataObject != null) {
@@ -283,6 +324,48 @@ class Server {
             // compatible; a command-bridge-aware extension executes them and
             // acknowledges via POST /api/commands/ack.
             response.json({ status: 'ok', commands: this.deliverPendingCommands() });
+        });
+
+        /**
+         * Events journal (co-captain persistent event history)
+         */
+        this.app.get('/api/events', (request, response) => {
+            try {
+                const { after_id, since, until, type, min_severity, q, limit } = request.query;
+                const events = this.db.searchEvents({
+                    after_id: after_id != null ? parseInt(after_id) : undefined,
+                    since,
+                    until,
+                    types: type ? String(type).split(',').map((t) => t.trim()).filter(Boolean) : undefined,
+                    min_severity,
+                    q,
+                    limit: limit != null ? parseInt(limit) : undefined,
+                });
+                response.json({ events, latest_id: this.db.getLatestEventId() });
+            } catch (error) {
+                response.status(500).json({ error: error.message });
+            }
+        });
+
+        /**
+         * Server / bridge health
+         */
+        this.app.get('/api/status', (request, response) => {
+            try {
+                const lastPostAgo = this.lastPostAt ? Math.round((Date.now() - this.lastPostAt) / 1000) : null;
+                response.json({
+                    version,
+                    uptime_seconds: Math.round((Date.now() - this.startedAt) / 1000),
+                    game_online: this.lastPostAt != null && (Date.now() - this.lastPostAt) <= GAME_STALE_MS,
+                    last_data_post_seconds_ago: lastPostAgo,
+                    events_total: this.db.getLatestEventId(),
+                    events_last_24h: this.db.getEventCounts(new Date(Date.now() - 24 * 3600 * 1000).toISOString()),
+                    commands_pending: this.commandQueue.length,
+                    savegames_parsed: this.db.getAllSavegames().length,
+                });
+            } catch (error) {
+                response.status(500).json({ error: error.message });
+            }
         });
 
         /**
@@ -479,5 +562,6 @@ const server = new Server(app, hostname, port)
 server.outputMessage(chalk.green(`X4 External App Server v${version}`))
     .serve()
     .setApi()
+    .startStaleWatchdog()
     .checkVersion()
     .outputMessage()

@@ -5,8 +5,8 @@
  * Standalone stdio server that bridges Claude to the X4-External-App stack:
  *  - live telemetry via the app's REST API (fed by the in-game Lua extension)
  *  - fleet/station/blueprint data via the savegame SQLite database
- *  - await_events: a severity-tiered long-poll that diffs live snapshots so
- *    a co-captain loop can wait for something to happen instead of polling
+ *  - a persistent events journal (diffed and written by the app server),
+ *    tailed by await_events and queryable via search_events / summaries
  *  - speak: host text-to-speech so advice reaches the player while flying
  *  - write path: notify_player / write_logbook enqueue allowlisted commands
  *    that the in-game bridge executes (see ../game-extension/COMMAND_BRIDGE.md)
@@ -26,6 +26,8 @@ import { createRequire } from "node:module";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { summarizeTransactions, summarizeEvents } from "./lib/summaries.mjs";
+import { assertReadOnlySql } from "./lib/sqlGuard.mjs";
 
 const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -33,19 +35,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_URL = (process.env.X4_APP_URL || "http://127.0.0.1:8080").replace(/\/+$/, "");
 const DB_PATH = process.env.X4_DB_PATH || path.join(__dirname, "..", "data", "x4_savegame.db");
 
-// Severity tuning (see README): credit deltas below NOTABLE are info,
-// large losses at/above URGENT are urgent; logbook entries matching the
-// combat pattern are urgent.
-const CREDITS_NOTABLE = parseInt(process.env.X4_CREDITS_NOTABLE || "100000", 10);
-const CREDITS_URGENT = parseInt(process.env.X4_CREDITS_URGENT || "1000000", 10);
-const URGENT_LOGBOOK_PATTERN = new RegExp(
-    process.env.X4_URGENT_REGEX ||
-    "attack|under fire|destroy|hostile|boarding|emergency|distress",
-    "i"
-);
-
+// Severity tuning (thresholds live in utils/eventClassifier.js, applied by
+// the app server when it writes the journal). The rank order is needed here
+// for filtering.
 const SEVERITY_RANK = { info: 0, notable: 1, urgent: 2 };
-const maxSeverity = (a, b) => (SEVERITY_RANK[a] >= SEVERITY_RANK[b] ? a : b);
 
 // Top-level keys the Lua extension POSTs to /api/data (see src/widgetConfig.js)
 const LIVE_SECTIONS = [
@@ -57,6 +50,8 @@ const LIVE_SECTIONS = [
     "currentResearch",
     "transactionLog",
     "factions",
+    "inventory",
+    "agents",
 ];
 
 /* ------------------------------------------------------------------ helpers */
@@ -141,160 +136,35 @@ function openDatabase() {
     return db;
 }
 
-function assertReadOnlySql(sql) {
-    const stripped = sql
-        .replace(/--.*$/gm, "")
-        .replace(/\/\*[\s\S]*?\*\//g, "")
-        .trim();
-    if (!/^(select|with)\b/i.test(stripped)) {
-        throw new Error("Only SELECT / WITH queries are allowed (read-only database).");
+/* ---------------------------------------------------------- events journal */
+
+// The app server diffs every game POST into a persistent events journal
+// (SQLite, /api/events). This process only keeps a cursor.
+let eventCursor = null;
+
+async function fetchEvents(params) {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+        if (value != null && value !== "") query.set(key, String(value));
     }
-    if (/;[\s\S]*\S/.test(stripped)) {
-        throw new Error("Only a single SQL statement is allowed.");
+    const result = await fetchJson(`/api/events?${query}`);
+    if (result.error) return { error: result.error };
+    if (result.status === 404) {
+        return {
+            error: "The app server has no /api/events endpoint — it predates the events journal. " +
+                "Pull the latest X4-External-App and restart node server.js.",
+        };
     }
-    return stripped;
+    if (!result.ok) return { error: result.data?.error ?? `HTTP ${result.status}` };
+    return { data: result.data };
 }
 
-/* ------------------------------------------------------------ event differ */
-
-// State persisted across await_events calls for the lifetime of this process.
-const eventState = {
-    initialized: false,
-    gameOnline: null,
-    credits: null,
-    missionName: null,
-    offerCount: null,
-    latestSavegameId: null,
-    logbookKeys: new Set(),
-    factionRelations: new Map(),
-};
-
-// Upstream v3.6.1 accumulates logbook entries with stable ids; prefer that
-// identity, fall back to content for older extensions.
-const logbookKey = (entry) =>
-    entry?.id != null
-        ? `${entry.id}_${entry.time ?? ""}`
-        : [entry?.passedtime, entry?.title, entry?.text, entry?.money].join("|");
-
-function classifyLogbookEntry(entry) {
-    const haystack = `${entry?.title ?? ""} ${entry?.text ?? ""}`;
-    if (URGENT_LOGBOOK_PATTERN.test(haystack)) return "urgent";
-    if (entry?.highlighted || Math.abs(entry?.money ?? 0) >= CREDITS_NOTABLE) return "notable";
-    return "info";
-}
-
-function classifyCredits(delta) {
-    if (delta <= -CREDITS_URGENT) return "urgent";
-    if (Math.abs(delta) >= CREDITS_NOTABLE) return "notable";
-    return "info";
-}
-
-function classifyRelation(from, to) {
-    // A relation dropping into or further into negative territory means
-    // shots may follow; everything else is worth a mention, not an alarm.
-    if (to < 0 && to < from) return "urgent";
-    return "notable";
-}
-
-function snapshotEvents(gameData, latestSavegame) {
-    const events = [];
-    const state = eventState;
-    const online = gameData != null;
-
-    if (state.initialized && online !== state.gameOnline) {
-        events.push({
-            type: online ? "game_online" : "game_offline",
-            severity: online ? "info" : "notable",
-        });
-    }
-    state.gameOnline = online;
-
-    if (online) {
-        const credits = gameData.playerProfile?.credits;
-        if (state.initialized && typeof credits === "number" &&
-            typeof state.credits === "number" && credits !== state.credits) {
-            const delta = credits - state.credits;
-            events.push({
-                type: "credits_changed",
-                severity: classifyCredits(delta),
-                from: state.credits,
-                to: credits,
-                delta,
-            });
-        }
-        if (typeof credits === "number") state.credits = credits;
-
-        const missionName = gameData.activeMission?.name ?? gameData.activeMission?.title ?? null;
-        if (state.initialized && missionName !== state.missionName) {
-            events.push({
-                type: "active_mission_changed",
-                severity: "notable",
-                from: state.missionName,
-                to: missionName,
-            });
-        }
-        state.missionName = missionName;
-
-        const offers = Array.isArray(gameData.missionOffers) ? gameData.missionOffers.length : null;
-        if (state.initialized && offers != null && state.offerCount != null && offers !== state.offerCount) {
-            events.push({ type: "mission_offers_changed", severity: "info", from: state.offerCount, to: offers });
-        }
-        if (offers != null) state.offerCount = offers;
-
-        const logbook = Array.isArray(gameData.logbook) ? gameData.logbook : [];
-        const newEntries = logbook.filter((entry) => !state.logbookKeys.has(logbookKey(entry)));
-        if (state.initialized && newEntries.length > 0) {
-            const annotated = newEntries
-                .slice(0, 20)
-                .map((entry) => ({ ...entry, severity: classifyLogbookEntry(entry) }));
-            events.push({
-                type: "logbook_entries",
-                severity: annotated.reduce((acc, entry) => maxSeverity(acc, entry.severity), "info"),
-                count: newEntries.length,
-                entries: annotated,
-            });
-        }
-        state.logbookKeys = new Set(logbook.map(logbookKey));
-
-        const factions = Array.isArray(gameData.factions) ? gameData.factions : [];
-        for (const faction of factions) {
-            const name = faction?.factionname ?? faction?.name;
-            const relation = faction?.relation ?? faction?.relationvalue ?? faction?.reputation;
-            if (name == null || relation == null) continue;
-            const previous = state.factionRelations.get(name);
-            if (state.initialized && previous != null && previous !== relation) {
-                events.push({
-                    type: "faction_relation_changed",
-                    severity: classifyRelation(previous, relation),
-                    faction: name,
-                    from: previous,
-                    to: relation,
-                });
-            }
-            state.factionRelations.set(name, relation);
-        }
-    }
-
-    const saveId = latestSavegame?.id ?? null;
-    if (state.initialized && saveId != null && saveId !== state.latestSavegameId) {
-        events.push({
-            type: "savegame_parsed",
-            severity: "info",
-            savegame_id: saveId,
-            filename: latestSavegame?.filename,
-        });
-    }
-    if (saveId != null) state.latestSavegameId = saveId;
-
-    state.initialized = true;
-    return events;
-}
 
 /* ------------------------------------------------------------------ server */
 
 const server = new McpServer({
     name: "x4-cocaptain",
-    version: "0.3.0",
+    version: "0.4.0",
 });
 
 server.registerTool(
@@ -521,12 +391,21 @@ server.registerTool(
         const startedAt = Date.now();
         let suppressed = 0;
 
-        while (true) {
-            const { gameData } = await fetchLiveData();
-            const latest = await fetchJson("/api/savegames/latest");
-            const latestSavegame = latest.ok ? latest.data : null;
+        // First call in this process: start from the journal's tail so old
+        // history isn't replayed (search_events covers the past).
+        if (eventCursor == null) {
+            const seed = await fetchEvents({ limit: 1 });
+            if (seed.error) return errorResult(seed.error);
+            eventCursor = seed.data.latest_id ?? 0;
+        }
 
-            const all = snapshotEvents(gameData, latestSavegame);
+        while (true) {
+            const page = await fetchEvents({ after_id: eventCursor, limit: 100 });
+            if (page.error) return errorResult(page.error);
+            const all = page.data.events;
+            if (all.length > 0) {
+                eventCursor = all[all.length - 1].id;
+            }
             const events = all.filter(
                 (event) => SEVERITY_RANK[event.severity] >= SEVERITY_RANK[min_severity]
             );
@@ -541,11 +420,160 @@ server.registerTool(
                     quiet: true,
                     suppressed_below_min_severity: suppressed,
                     waited_seconds: waited,
-                    game_online: eventState.gameOnline === true,
                 });
             }
             await sleep(2000);
         }
+    }
+);
+
+server.registerTool(
+    "search_events",
+    {
+        title: "Search event history",
+        description: "Query the persistent events journal — every event the server has recorded across " +
+            "sessions (X4 writes no journal of its own; this database is it). Filter by type, severity, " +
+            "time range, and free text; newest first.",
+        inputSchema: {
+            type: z.string().optional()
+                .describe("Comma-separated event types, e.g. 'logbook_entries,credits_changed'"),
+            min_severity: z.enum(["info", "notable", "urgent"]).optional(),
+            since: z.string().optional().describe("ISO timestamp lower bound (UTC), e.g. 2026-08-26T00:00:00Z"),
+            until: z.string().optional().describe("ISO timestamp upper bound (UTC)"),
+            q: z.string().optional().describe("Substring match against event payload"),
+            limit: z.number().int().min(1).max(1000).default(50),
+        },
+    },
+    async ({ type, min_severity, since, until, q, limit }) => {
+        const result = await fetchEvents({ type, min_severity, since, until, q, limit });
+        if (result.error) return errorResult(result.error);
+        return jsonResult({ event_count: result.data.events.length, events: result.data.events });
+    }
+);
+
+server.registerTool(
+    "server_status",
+    {
+        title: "Get bridge health",
+        description: "Health of the X4-External-App server: uptime, whether the game is posting data, " +
+            "journal size, pending commands, parsed savegames.",
+        inputSchema: {},
+    },
+    async () => {
+        const result = await fetchJson("/api/status");
+        if (result.error) return errorResult(result.error);
+        if (!result.ok) return errorResult("App server has no /api/status endpoint — pull the latest and restart.");
+        return jsonResult(result.data);
+    }
+);
+
+/* ------------------------------------------------------- tailored summaries */
+
+server.registerTool(
+    "get_trading_summary",
+    {
+        title: "Summarize transactions (tailorable)",
+        description: "Aggregate the accumulated in-game transaction log into a financial summary, shaped " +
+            "per call: filter by direction, event type (e.g. 'trade', 'repair'), counterparty, amount, " +
+            "in-game time range or newest-N; group by event_type, partner, or none; cap groups with top. " +
+            "Use tight filters to answer specific questions ('income from station trades with TEL') " +
+            "instead of dumping everything.",
+        inputSchema: {
+            direction: z.enum(["income", "expense", "all"]).default("all"),
+            event_type: z.string().optional().describe("Substring match on the transaction's event type name"),
+            partner: z.string().optional().describe("Substring match on the counterparty name"),
+            q: z.string().optional().describe("Substring match on either field"),
+            min_amount: z.number().optional().describe("Only transactions with |money| at least this"),
+            since_time: z.number().optional().describe("Lower bound on the entry's in-game time value"),
+            until_time: z.number().optional().describe("Upper bound on the entry's in-game time value"),
+            newest: z.number().int().min(1).optional().describe("Only the N most recent entries"),
+            group_by: z.enum(["event_type", "partner", "none"]).default("event_type"),
+            top: z.number().int().min(1).max(50).default(10).describe("Max groups returned, ranked by |net|"),
+        },
+    },
+    async (filters) => {
+        const { gameData, error } = await fetchLiveData();
+        if (error) return errorResult(error);
+        const entries = gameData?.transactionLog;
+        if (!Array.isArray(entries) || entries.length === 0) {
+            return jsonResult({ matched: 0, message: "No transaction log data received from the game yet." });
+        }
+        return jsonResult(summarizeTransactions(entries, filters));
+    }
+);
+
+server.registerTool(
+    "get_activity_summary",
+    {
+        title: "Summarize recent activity",
+        description: "Digest of the events journal over a time window: event counts by type and severity, " +
+            "net credit flow, urgent incidents, and mission changes. Narrow with type/q the same way as " +
+            "search_events when a focused digest is wanted (e.g. only combat, one faction).",
+        inputSchema: {
+            hours: z.number().min(0.1).max(720).default(24).describe("Look-back window in real hours"),
+            type: z.string().optional().describe("Comma-separated event types to include"),
+            q: z.string().optional().describe("Substring filter on event payloads"),
+            top: z.number().int().min(1).max(50).default(10).describe("Max urgent events / mission changes listed"),
+        },
+    },
+    async ({ hours, type, q, top }) => {
+        const since = new Date(Date.now() - hours * 3600 * 1000).toISOString();
+        const result = await fetchEvents({ since, type, q, limit: 1000 });
+        if (result.error) return errorResult(result.error);
+        return jsonResult({ window_hours: hours, since, ...summarizeEvents(result.data.events, { top }) });
+    }
+);
+
+server.registerTool(
+    "situation_report",
+    {
+        title: "Full situation report",
+        description: "One compact briefing: player state, active mission, fleet health from the latest " +
+            "savegame, recent notable events, and pending bridge commands. The right first call of a " +
+            "co-captain session.",
+        inputSchema: {},
+    },
+    async () => {
+        const [{ gameData }, statusResult, saveResult, eventsResult, commandsResult] = await Promise.all([
+            fetchLiveData(),
+            fetchJson("/api/status"),
+            fetchJson("/api/savegames/latest"),
+            fetchEvents({ min_severity: "notable", limit: 10 }),
+            fetchJson("/api/commands"),
+        ]);
+
+        const report = {
+            bridge: statusResult.ok ? {
+                game_online: statusResult.data.game_online,
+                uptime_seconds: statusResult.data.uptime_seconds,
+            } : { error: statusResult.error ?? "status unavailable" },
+            player: gameData?.playerProfile ?? null,
+            active_mission: gameData?.activeMission?.name ?? gameData?.activeMission?.title ?? null,
+            mission_offers: Array.isArray(gameData?.missionOffers) ? gameData.missionOffers.length : null,
+            recent_notable_events: eventsResult.error ? eventsResult.error : eventsResult.data.events,
+            pending_commands: commandsResult.ok ? commandsResult.data.pending : null,
+        };
+
+        if (saveResult.ok && saveResult.data?.id != null) {
+            const ships = await fetchJson(`/api/savegames/${saveResult.data.id}/ships`);
+            if (ships.ok && Array.isArray(ships.data)) {
+                const damaged = ships.data
+                    .filter((ship) => typeof ship.hull_health === "number" && ship.hull_health < 70)
+                    .sort((a, b) => a.hull_health - b.hull_health);
+                report.fleet = {
+                    savegame: { id: saveResult.data.id, filename: saveResult.data.filename, parsed_at: saveResult.data.parsed_at },
+                    ship_count: ships.data.length,
+                    damaged_count: damaged.length,
+                    worst_damaged: damaged.slice(0, 5).map((ship) => ({
+                        name: ship.ship_name, class: ship.ship_class, sector: ship.sector, hull: ship.hull_health,
+                    })),
+                };
+            }
+        } else {
+            report.fleet = { message: "No parsed savegame yet." };
+        }
+
+        return jsonResult(report);
     }
 );
 
