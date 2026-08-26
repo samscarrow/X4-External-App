@@ -109,15 +109,42 @@ function external.executeCommand (command)
         return true
     end
 
-    if command.type == "fly_my_ship_to" then
+    -- fly_my_ship_to (ship = the one the player is aboard) and order_ship_to
+    -- (ship named by idcode/name) share one MD cue: control 'order_ship_to'.
+    if command.type == "fly_my_ship_to" or command.type == "order_ship_to" then
         local out = {}
+        if command.type == "order_ship_to" then
+            if type(payload.ship) ~= "string" or payload.ship == "" then
+                DebugError("Co-captain bridge: order_ship_to command " .. tostring(command.id) .. " has no ship")
+                return false
+            end
+            out.ship = payload.ship
+        end
         if type(payload.sector) == "string" and payload.sector ~= "" then
             out.sector = payload.sector
         end
         if type(payload.x) == "number" then out.x = payload.x end
         if type(payload.y) == "number" then out.y = payload.y end
         if type(payload.z) == "number" then out.z = payload.z end
-        AddUITriggeredEvent("CoCaptainBridge", "fly_my_ship_to", out)
+        AddUITriggeredEvent("CoCaptainBridge", "order_ship_to", out)
+        return true
+    end
+
+    if command.type == "clear_ship_orders" then
+        local out = {}
+        if type(payload.ship) == "string" and payload.ship ~= "" then
+            out.ship = payload.ship
+        end
+        AddUITriggeredEvent("CoCaptainBridge", "clear_ship_orders", out)
+        return true
+    end
+
+    if command.type == "ping_ship" then
+        if type(payload.ship) ~= "string" or payload.ship == "" then
+            DebugError("Co-captain bridge: ping_ship command " .. tostring(command.id) .. " has no ship")
+            return false
+        end
+        AddUITriggeredEvent("CoCaptainBridge", "ping_ship", { ship = payload.ship })
         return true
     end
 

@@ -34,7 +34,7 @@ missing bridge is diagnosable rather than silent.
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /api/commands` `{type, payload}` | Enqueue (types: `notify`, `logbook`, `set_guidance`, `fly_my_ship_to`; queue cap 20) |
+| `POST /api/commands` `{type, payload}` | Enqueue (types: `notify`, `logbook`, `set_guidance`, `fly_my_ship_to`, `order_ship_to`, `clear_ship_orders`, `ping_ship`; queue cap 20) |
 | `GET /api/commands` | `{pending, history}` with statuses |
 | `POST /api/commands/ack` `{ids}` | Mark delivered commands executed |
 | `DELETE /api/commands/:id` | Cancel a pending command |
@@ -49,7 +49,10 @@ The MCP tools `notify_player`, `write_logbook`, `set_guidance`, `get_command_que
 | `notify` | `{text}` | Ticker notification (`show_notification`) |
 | `logbook` | `{title, text}` | Logbook entry, category General (`write_to_logbook`) |
 | `set_guidance` | `{sector?, x?, y?, z?}` or `{clear: true}` | HUD guidance via the **vanilla guidance system**: the bridge cue resolves the sector (macro id via dynamic `macro.{...}` lookup, or exact `knownname`; omitted = player's current sector) and signals `md.Guidance.NewTarget` with `[$Sector, $Offset]` — the same entry point vanilla scripts use, so mission display, path plotting, arrival auto-end, and cleanup are all stock behaviour. `x/y/z` are km offsets from sector centre; without them guidance targets the sector itself. `clear` signals `md.Guidance.EndGuidance`. Note: guidance shares the single active-mission slot — an active mission supersedes it (vanilla `GuidanceLost` aborts co-captain guidance when a mission takes the slot). |
-| `fly_my_ship_to` | `{sector?, x?, y?, z?}` | **First real ship order.** Issues `MoveWait` ("Fly and Wait") with `immediate="true"` to `player.occupiedship` — the same order as the map's right-click move. Sector/offset resolution as in `set_guidance`. Guarded in MD: refused (with an in-game notice) unless the player is aboard a player-owned, non-spacesuit ship with an assigned NPC captain and is not piloting themselves (`$Ship.pilot == player.entity` → "you have the helm"). Success posts a ticker notice and a logbook audit entry naming ship, captain, and destination. |
+| `fly_my_ship_to` | `{sector?, x?, y?, z?}` | Issues `MoveWait` ("Fly and Wait") with `immediate="true"` to `player.occupiedship` — the same order as the map's right-click move. Shares the `order_ship_to` MD cue (the Lua layer maps it to that control with no `ship` field). |
+| `order_ship_to` | `{ship, sector?, x?, y?, z?}` | Generalised move order: any **player-owned** ship, resolved by `idcode` (e.g. `VYU-077`, unambiguous — preferred) or exact `knownname` (first match wins on collisions, with a ticker warning). Guards refuse, with an in-game notice, when the ship has no assigned NPC captain or the player is at its helm. Success posts a ticker notice + logbook audit entry (ship, captain, destination). **Watcher cues** then listen for `event_object_order_finished` / `event_object_order_cancelled` on that exact order and write arrival/cancellation to ticker + logbook — and since the events journal ingests logbook entries, the co-captain sees order completion via `await_events`. |
+| `clear_ship_orders` | `{ship?}` | The undo: `cancel_all_orders` on a named own ship, or the ship the player is aboard when omitted. Ticker + logbook audit entry; the captain idles until given new orders. |
+| `ping_ship` | `{ship}` | Locate an own ship: signals `md.Guidance.NewTarget` with the ship component, so the HUD marker **tracks the ship live** (vanilla handles the moving target and cleanup), and reports the ship's current sector in the ticker. HUD-only; subject to the same active-mission supersession as `set_guidance`. |
 
 ## Game-side integration (implemented)
 
@@ -107,13 +110,14 @@ diplomacy/alerts) and `title`. `event.param3` carries the Lua payload table.
 
 ## Safety posture
 
-- Command types are allowlisted server-side (`notify`, `logbook`, `set_guidance`,
-  `fly_my_ship_to`); unknown types are rejected at enqueue, so the MCP layer cannot
-  smuggle arbitrary instructions to MD.
+- Command types are allowlisted server-side (see the table above); unknown types are
+  rejected at enqueue, so the MCP layer cannot smuggle arbitrary instructions to MD.
 - Queue is capped at 20 pending so a missing bridge can't accumulate unbounded backlog.
-- Phase 5 (fleet orders) extends the type allowlist deliberately, one command at a time,
-  each with its own MD cue, keeping an advise-by-default posture: the co-captain only
-  enqueues an order on the player's explicit ask. `set_guidance` (2026-08-26) was the
-  first: HUD-only, touches no ship orders. `fly_my_ship_to` (2026-08-26) is the first
-  real order, limited to the ship the player is standing on, with MD-side guards and a
-  logbook audit trail. Candidates next: ping ship position, recall ship.
+- Phase 5 (fleet orders) extends the type allowlist deliberately, keeping an
+  advise-by-default posture: the co-captain only enqueues an order on the player's
+  explicit ask. Landed 2026-08-26: `set_guidance` (HUD-only), `fly_my_ship_to` /
+  `order_ship_to` (movement orders with MD-side guards, logbook audit trail, and
+  arrival/cancellation feedback), `clear_ship_orders` (the undo), `ping_ship`
+  (HUD-only locate). All ship commands are restricted to player-owned ships and refuse
+  when the player is at the helm. Held deliberately: docking orders (station-name
+  ambiguity), combat and trade orders (bigger posture conversation).

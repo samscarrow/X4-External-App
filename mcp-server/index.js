@@ -755,6 +755,65 @@ server.registerTool(
 );
 
 server.registerTool(
+    "order_ship_to",
+    {
+        title: "Order one of the player's ships to fly somewhere",
+        description: "Issue a REAL MoveWait ('Fly and Wait') order to any player-owned ship, named by " +
+            "ID code (e.g. 'VYU-077', unambiguous - preferred) or exact ship name. This commands a ship, " +
+            "so it is strictly on-request: NEVER call it unless the player explicitly asked for this ship " +
+            "movement in their latest request. The game refuses it (with an in-game notice) if the ship " +
+            "has no NPC captain or the player is at its helm; on name collisions it uses the first match " +
+            "and says so. Arrival or cancellation is reported back via logbook entries, which surface in " +
+            "the events journal (await_events / search_events).",
+        inputSchema: {
+            ship: z.string().min(1)
+                .describe("Ship ID code (e.g. 'VYU-077') or exact known ship name. Player-owned ships only"),
+            sector: z.string().optional()
+                .describe("Destination sector: macro id or exact known sector name (case-sensitive). " +
+                    "Omitted: the player's current sector"),
+            x: z.number().optional().describe("East-west offset from sector centre, km"),
+            y: z.number().optional().describe("Vertical offset from sector centre, km"),
+            z: z.number().optional().describe("North-south offset from sector centre, km"),
+        },
+    },
+    async ({ ship, sector, x, y, z }) => enqueueCommand("order_ship_to", { ship, sector, x, y, z })
+);
+
+server.registerTool(
+    "clear_ship_orders",
+    {
+        title: "Cancel all orders on one of the player's ships",
+        description: "Belay: cancel ALL orders on a player-owned ship - the undo for co-captain-issued " +
+            "orders (it also clears any other queued orders, and the captain then idles until given new " +
+            "ones, so say that when relevant). Ship by ID code or exact name; omitted = the ship the " +
+            "player is aboard. Strictly on-request: only call when the player explicitly asked to cancel " +
+            "or belay orders.",
+        inputSchema: {
+            ship: z.string().optional()
+                .describe("Ship ID code (e.g. 'VYU-077') or exact known ship name. Omitted: the ship the " +
+                    "player is currently aboard"),
+        },
+    },
+    async ({ ship }) => enqueueCommand("clear_ship_orders", { ship })
+);
+
+server.registerTool(
+    "ping_ship",
+    {
+        title: "Locate one of the player's ships",
+        description: "Point the player's HUD guidance marker at one of their ships (the marker tracks the " +
+            "ship live) and report its current sector in the ticker. HUD-only - orders nothing. Ship by " +
+            "ID code (e.g. 'VYU-077') or exact name. Note: an active mission supersedes the guidance " +
+            "marker, same as set_guidance.",
+        inputSchema: {
+            ship: z.string().min(1)
+                .describe("Ship ID code (e.g. 'VYU-077') or exact known ship name. Player-owned ships only"),
+        },
+    },
+    async ({ ship }) => enqueueCommand("ping_ship", { ship })
+);
+
+server.registerTool(
     "get_command_queue",
     {
         title: "Inspect command queue",

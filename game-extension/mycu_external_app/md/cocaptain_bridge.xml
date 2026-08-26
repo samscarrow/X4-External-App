@@ -4,8 +4,8 @@
   piggybacks on its /api/data reply. ui/ea.lua parses that reply and raises
   one UI-triggered event per command; the cues below perform the visible
   action. Action names/attributes validated against the game's
-  libraries/common.xsd (X4 v9.x): show_notification takes `text`;
-  write_to_logbook takes `category`, `title`, `text`.
+  libraries/md.xsd + libraries/common.xsd (X4 v9.x), extracted from 08.cat.
+  See game-extension/COMMAND_BRIDGE.md for the protocol and payloads.
 -->
 <mdscript name="CoCaptainBridge" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
     <cues>
@@ -17,6 +17,7 @@
                 <show_notification text="event.param3.{'text'}" />
             </actions>
         </cue>
+
         <cue name="CoCaptain_OnLogbook" instantiate="true">
             <conditions>
                 <event_ui_triggered screen="'CoCaptainBridge'" control="'logbook'" />
@@ -25,14 +26,13 @@
                 <write_to_logbook category="general" title="event.param3.{'title'}" text="event.param3.{'text'}" />
             </actions>
         </cue>
+
         <!--
           set_guidance rides the vanilla guidance system (md/guidance.xml) - the
-          same machinery the map's right-click "set guidance" uses, including
-          mission display, path plotting, arrival detection, and cleanup.
-          Payload: { clear = true } to end guidance, or optional
+          same machinery the map's right-click "set guidance" uses. Note that
+          guidance shares the single active-mission slot: an active mission
+          supersedes it (vanilla GuidanceLost). Payload: { clear = true } or
           { sector = <macro id or exact known sector name>, x/y/z = km offset }.
-          No sector -> the player's current sector; no offset -> sector-entry
-          guidance that auto-ends on arrival (vanilla behaviour).
         -->
         <cue name="CoCaptain_OnSetGuidance" instantiate="true">
             <conditions>
@@ -75,65 +75,200 @@
                 </do_else>
             </actions>
         </cue>
+
         <!--
-          fly_my_ship_to issues a real MoveWait ("Fly and Wait") order to the ship
-          the player is aboard - the same order the map's right-click move gives.
-          Guards: must be aboard a player-owned ship (not a spacesuit) with an
-          assigned NPC captain, and the player must not be at the helm themselves.
-          Payload: { sector = <macro id or exact known sector name>, x/y/z = km }.
-          No sector -> the player's current sector (needs an x/y/z offset to be
-          meaningful there).
+          order_ship_to issues a real MoveWait ("Fly and Wait") order. Serves two
+          command types: fly_my_ship_to (no 'ship' in payload -> the ship the
+          player is aboard) and order_ship_to (ship named by idcode, e.g.
+          'VYU-077', or exact known name; player-owned ships only). Guards
+          refuse, with an in-game notice, when the target has no NPC captain or
+          the player is at the helm. On success: ticker notice + logbook audit
+          entry, and watcher cues report arrival or cancellation back to the
+          logbook (which the events journal ingests, so the co-captain sees it).
         -->
-        <cue name="CoCaptain_OnFlyMyShipTo" instantiate="true">
+        <cue name="CoCaptain_OnOrderShipTo" instantiate="true">
             <conditions>
-                <event_ui_triggered screen="'CoCaptainBridge'" control="'fly_my_ship_to'" />
+                <event_ui_triggered screen="'CoCaptainBridge'" control="'order_ship_to'" />
             </conditions>
             <actions>
-                <set_value name="$Ship" exact="player.occupiedship" />
-                <do_if value="not $Ship.exists or $Ship.isclass.spacesuit">
-                    <show_notification text="'Co-captain: you are not aboard a ship'" />
-                </do_if>
-                <do_elseif value="not $Ship.isplayerowned">
-                    <show_notification text="'Co-captain: ' + $Ship.knownname + ' is not our ship to command'" />
-                </do_elseif>
-                <do_elseif value="$Ship.pilot == player.entity">
-                    <show_notification text="'Co-captain: you have the helm - set guidance instead'" />
-                </do_elseif>
-                <do_elseif value="not @$Ship.assignedpilot">
-                    <show_notification text="'Co-captain: ' + $Ship.knownname + ' has no captain to take the order'" />
-                </do_elseif>
-                <do_else>
-                    <do_if value="event.param3.{'sector'}?">
-                        <set_value name="$SectorArg" exact="event.param3.{'sector'}" />
-                        <set_value name="$WantedMacro" exact="if macro.{$SectorArg}? then macro.{$SectorArg} else null" />
-                        <set_value name="$Sector" exact="null" />
-                        <find_sector name="$AllSectors" space="player.galaxy" multiple="true" />
-                        <do_all exact="$AllSectors.count" counter="$i">
-                            <do_if value="($WantedMacro and $AllSectors.{$i}.macro == $WantedMacro) or $AllSectors.{$i}.knownname == $SectorArg">
-                                <set_value name="$Sector" exact="$AllSectors.{$i}" />
+                <do_if value="event.param3.{'ship'}?">
+                    <set_value name="$ShipArg" exact="event.param3.{'ship'}" />
+                    <set_value name="$Ship" exact="null" />
+                    <set_value name="$Matches" exact="0" />
+                    <find_ship name="$AllShips" space="player.galaxy" owner="faction.player" multiple="true" />
+                    <do_all exact="$AllShips.count" counter="$i">
+                        <do_if value="$AllShips.{$i}.idcode == $ShipArg or $AllShips.{$i}.knownname == $ShipArg">
+                            <set_value name="$Matches" operation="add" />
+                            <do_if value="not $Ship">
+                                <set_value name="$Ship" exact="$AllShips.{$i}" />
                             </do_if>
-                        </do_all>
-                    </do_if>
-                    <do_else>
-                        <set_value name="$Sector" exact="player.sector" />
-                    </do_else>
-                    <do_if value="$Sector">
-                        <set_value name="$Destination" exact="$Sector" />
-                        <do_if value="event.param3.{'x'}? or event.param3.{'y'}? or event.param3.{'z'}?">
-                            <set_value name="$X" exact="if event.param3.{'x'}? then event.param3.{'x'} else 0" />
-                            <set_value name="$Y" exact="if event.param3.{'y'}? then event.param3.{'y'} else 0" />
-                            <set_value name="$Z" exact="if event.param3.{'z'}? then event.param3.{'z'} else 0" />
-                            <set_value name="$Destination" exact="[$Sector, position.[$X * 1km, $Y * 1km, $Z * 1km]]" />
                         </do_if>
-                        <create_order id="'MoveWait'" object="$Ship" immediate="true">
-                            <param name="destination" value="$Destination" />
-                        </create_order>
-                        <show_notification text="'Co-captain: ordered ' + $Ship.knownname + ' to fly to ' + $Sector.knownname" />
-                        <write_to_logbook category="general" title="'Co-captain order'" text="'Ordered ' + $Ship.knownname + ' (captain ' + $Ship.assignedpilot.knownname + ') to fly to ' + $Sector.knownname" />
+                    </do_all>
+                    <do_if value="not $Ship">
+                        <show_notification text="'Co-captain: no owned ship matches ' + $ShipArg" />
+                    </do_if>
+                    <do_elseif value="$Matches gt 1">
+                        <show_notification text="'Co-captain: ' + $Matches + ' ships match ' + $ShipArg + ' - using ' + $Ship.knownname + ' ' + $Ship.idcode" />
+                    </do_elseif>
+                </do_if>
+                <do_else>
+                    <set_value name="$Ship" exact="player.occupiedship" />
+                    <do_if value="not $Ship.exists or $Ship.isclass.spacesuit or not $Ship.isplayerowned">
+                        <set_value name="$Ship" exact="null" />
+                        <show_notification text="'Co-captain: you are not aboard a ship of ours'" />
+                    </do_if>
+                </do_else>
+                <do_if value="$Ship">
+                    <do_if value="$Ship.pilot == player.entity">
+                        <show_notification text="'Co-captain: you have the helm of ' + $Ship.knownname + ' - set guidance instead'" />
+                    </do_if>
+                    <do_elseif value="not @$Ship.assignedpilot">
+                        <show_notification text="'Co-captain: ' + $Ship.knownname + ' has no captain to take the order'" />
+                    </do_elseif>
+                    <do_else>
+                        <do_if value="event.param3.{'sector'}?">
+                            <set_value name="$SectorArg" exact="event.param3.{'sector'}" />
+                            <set_value name="$WantedMacro" exact="if macro.{$SectorArg}? then macro.{$SectorArg} else null" />
+                            <set_value name="$DestSector" exact="null" />
+                            <find_sector name="$AllSectors" space="player.galaxy" multiple="true" />
+                            <do_all exact="$AllSectors.count" counter="$i">
+                                <do_if value="($WantedMacro and $AllSectors.{$i}.macro == $WantedMacro) or $AllSectors.{$i}.knownname == $SectorArg">
+                                    <set_value name="$DestSector" exact="$AllSectors.{$i}" />
+                                </do_if>
+                            </do_all>
+                        </do_if>
+                        <do_else>
+                            <set_value name="$DestSector" exact="player.sector" />
+                        </do_else>
+                        <do_if value="$DestSector">
+                            <set_value name="$Destination" exact="$DestSector" />
+                            <do_if value="event.param3.{'x'}? or event.param3.{'y'}? or event.param3.{'z'}?">
+                                <set_value name="$X" exact="if event.param3.{'x'}? then event.param3.{'x'} else 0" />
+                                <set_value name="$Y" exact="if event.param3.{'y'}? then event.param3.{'y'} else 0" />
+                                <set_value name="$Z" exact="if event.param3.{'z'}? then event.param3.{'z'} else 0" />
+                                <set_value name="$Destination" exact="[$DestSector, position.[$X * 1km, $Y * 1km, $Z * 1km]]" />
+                            </do_if>
+                            <create_order id="'MoveWait'" object="$Ship" immediate="true" name="$MoveOrder">
+                                <param name="destination" value="$Destination" />
+                            </create_order>
+                            <show_notification text="'Co-captain: ordered ' + $Ship.knownname + ' ' + $Ship.idcode + ' to fly to ' + $DestSector.knownname" />
+                            <write_to_logbook category="general" title="'Co-captain order'" text="'Ordered ' + $Ship.knownname + ' ' + $Ship.idcode + ' (captain ' + $Ship.assignedpilot.knownname + ') to fly to ' + $DestSector.knownname" />
+                        </do_if>
+                        <do_else>
+                            <show_notification text="'Co-captain: unknown sector ' + $SectorArg" />
+                        </do_else>
+                    </do_else>
+                </do_if>
+            </actions>
+            <cues>
+                <!-- Only lives when an order was actually created -->
+                <cue name="CoCaptain_OrderWatch" onfail="cancel">
+                    <conditions>
+                        <check_value value="$MoveOrder?" />
+                    </conditions>
+                    <cues>
+                        <cue name="CoCaptain_OrderDone">
+                            <conditions>
+                                <check_any>
+                                    <event_object_order_finished object="$Ship" />
+                                    <event_object_order_cancelled object="$Ship" />
+                                </check_any>
+                                <check_value value="event.param == $MoveOrder" />
+                            </conditions>
+                            <actions>
+                                <do_if value="event.name == 'event_object_order_finished'">
+                                    <show_notification text="'Co-captain: ' + $Ship.knownname + ' ' + $Ship.idcode + ' has arrived at ' + $DestSector.knownname" />
+                                    <write_to_logbook category="general" title="'Co-captain order complete'" text="$Ship.knownname + ' ' + $Ship.idcode + ' arrived at ' + $DestSector.knownname" />
+                                </do_if>
+                                <do_else>
+                                    <write_to_logbook category="general" title="'Co-captain order cancelled'" text="'Move order for ' + $Ship.knownname + ' ' + $Ship.idcode + ' to ' + $DestSector.knownname + ' was cancelled'" />
+                                </do_else>
+                            </actions>
+                        </cue>
+                    </cues>
+                </cue>
+            </cues>
+        </cue>
+
+        <!--
+          clear_ship_orders: the undo. Cancels all orders on a named own ship
+          (idcode or exact name), or the ship the player is aboard when no ship
+          is named. The captain reverts to idling until given new orders.
+        -->
+        <cue name="CoCaptain_OnClearShipOrders" instantiate="true">
+            <conditions>
+                <event_ui_triggered screen="'CoCaptainBridge'" control="'clear_ship_orders'" />
+            </conditions>
+            <actions>
+                <do_if value="event.param3.{'ship'}?">
+                    <set_value name="$ShipArg" exact="event.param3.{'ship'}" />
+                    <set_value name="$Ship" exact="null" />
+                    <set_value name="$Matches" exact="0" />
+                    <find_ship name="$AllShips" space="player.galaxy" owner="faction.player" multiple="true" />
+                    <do_all exact="$AllShips.count" counter="$i">
+                        <do_if value="$AllShips.{$i}.idcode == $ShipArg or $AllShips.{$i}.knownname == $ShipArg">
+                            <set_value name="$Matches" operation="add" />
+                            <do_if value="not $Ship">
+                                <set_value name="$Ship" exact="$AllShips.{$i}" />
+                            </do_if>
+                        </do_if>
+                    </do_all>
+                    <do_if value="not $Ship">
+                        <show_notification text="'Co-captain: no owned ship matches ' + $ShipArg" />
+                    </do_if>
+                    <do_elseif value="$Matches gt 1">
+                        <show_notification text="'Co-captain: ' + $Matches + ' ships match ' + $ShipArg + ' - using ' + $Ship.knownname + ' ' + $Ship.idcode" />
+                    </do_elseif>
+                </do_if>
+                <do_else>
+                    <set_value name="$Ship" exact="player.occupiedship" />
+                    <do_if value="not $Ship.exists or $Ship.isclass.spacesuit or not $Ship.isplayerowned">
+                        <set_value name="$Ship" exact="null" />
+                        <show_notification text="'Co-captain: you are not aboard a ship of ours'" />
+                    </do_if>
+                </do_else>
+                <do_if value="$Ship">
+                    <cancel_all_orders object="$Ship" />
+                    <show_notification text="'Co-captain: belayed all orders on ' + $Ship.knownname + ' ' + $Ship.idcode" />
+                    <write_to_logbook category="general" title="'Co-captain order'" text="'Cancelled all orders on ' + $Ship.knownname + ' ' + $Ship.idcode" />
+                </do_if>
+            </actions>
+        </cue>
+
+        <!--
+          ping_ship: locate one of your ships. Sets the vanilla guidance marker
+          onto the ship itself (guidance tracks moving components live) and
+          reports its current sector in the ticker. HUD-only; an active mission
+          supersedes the marker, same as set_guidance.
+        -->
+        <cue name="CoCaptain_OnPingShip" instantiate="true">
+            <conditions>
+                <event_ui_triggered screen="'CoCaptainBridge'" control="'ping_ship'" />
+            </conditions>
+            <actions>
+                <set_value name="$ShipArg" exact="event.param3.{'ship'}" />
+                <set_value name="$Ship" exact="null" />
+                <set_value name="$Matches" exact="0" />
+                <find_ship name="$AllShips" space="player.galaxy" owner="faction.player" multiple="true" />
+                <do_all exact="$AllShips.count" counter="$i">
+                    <do_if value="$AllShips.{$i}.idcode == $ShipArg or $AllShips.{$i}.knownname == $ShipArg">
+                        <set_value name="$Matches" operation="add" />
+                        <do_if value="not $Ship">
+                            <set_value name="$Ship" exact="$AllShips.{$i}" />
+                        </do_if>
+                    </do_if>
+                </do_all>
+                <do_if value="$Ship">
+                    <signal_cue_instantly cue="md.Guidance.NewTarget" param="[$Ship, null]" />
+                    <do_if value="$Matches gt 1">
+                        <show_notification text="'Co-captain: ' + $Matches + ' ships match ' + $ShipArg + ' - marking ' + $Ship.knownname + ' ' + $Ship.idcode + ' in ' + $Ship.sector.knownname" />
                     </do_if>
                     <do_else>
-                        <show_notification text="'Co-captain: unknown sector ' + $SectorArg" />
+                        <show_notification text="'Co-captain: ' + $Ship.knownname + ' ' + $Ship.idcode + ' is in ' + $Ship.sector.knownname" />
                     </do_else>
+                </do_if>
+                <do_else>
+                    <show_notification text="'Co-captain: no owned ship matches ' + $ShipArg" />
                 </do_else>
             </actions>
         </cue>
