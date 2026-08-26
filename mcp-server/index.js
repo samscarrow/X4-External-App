@@ -1,22 +1,24 @@
 #!/usr/bin/env node
 /**
- * X4 Co-Captain MCP server — Phase 1 (read-only).
+ * X4 Co-Captain MCP server.
  *
  * Standalone stdio server that bridges Claude to the X4-External-App stack:
  *  - live telemetry via the app's REST API (fed by the in-game Lua extension)
  *  - fleet/station/blueprint data via the savegame SQLite database
- *  - await_events: a long-poll that diffs live snapshots so a co-captain
- *    loop can wait for something to happen instead of polling by hand
+ *  - await_events: a severity-tiered long-poll that diffs live snapshots so
+ *    a co-captain loop can wait for something to happen instead of polling
+ *  - speak: host text-to-speech so advice reaches the player while flying
  *
- * Environment:
- *  X4_APP_URL  base URL of the running X4-External-App server (default http://127.0.0.1:8080)
- *  X4_DB_PATH  path to x4_savegame.db (default ../data/x4_savegame.db relative to this file)
+ * Game-facing tools are read-only. See README.md for the environment
+ * variables (X4_APP_URL, X4_DB_PATH, severity thresholds, TTS override).
  *
  * stdout carries the MCP protocol — all logging must go to stderr.
  */
 
 import path from "node:path";
 import fs from "node:fs";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -28,6 +30,20 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const APP_URL = (process.env.X4_APP_URL || "http://127.0.0.1:8080").replace(/\/+$/, "");
 const DB_PATH = process.env.X4_DB_PATH || path.join(__dirname, "..", "data", "x4_savegame.db");
+
+// Severity tuning (see README): credit deltas below NOTABLE are info,
+// large losses at/above URGENT are urgent; logbook entries matching the
+// combat pattern are urgent.
+const CREDITS_NOTABLE = parseInt(process.env.X4_CREDITS_NOTABLE || "100000", 10);
+const CREDITS_URGENT = parseInt(process.env.X4_CREDITS_URGENT || "1000000", 10);
+const URGENT_LOGBOOK_PATTERN = new RegExp(
+    process.env.X4_URGENT_REGEX ||
+    "attack|under fire|destroy|hostile|boarding|emergency|distress",
+    "i"
+);
+
+const SEVERITY_RANK = { info: 0, notable: 1, urgent: 2 };
+const maxSeverity = (a, b) => (SEVERITY_RANK[a] >= SEVERITY_RANK[b] ? a : b);
 
 // Top-level keys the Lua extension POSTs to /api/data (see src/widgetConfig.js)
 const LIVE_SECTIONS = [
@@ -151,8 +167,32 @@ const eventState = {
     factionRelations: new Map(),
 };
 
+// Upstream v3.6.1 accumulates logbook entries with stable ids; prefer that
+// identity, fall back to content for older extensions.
 const logbookKey = (entry) =>
-    [entry?.passedtime, entry?.title, entry?.text, entry?.money].join("|");
+    entry?.id != null
+        ? `${entry.id}_${entry.time ?? ""}`
+        : [entry?.passedtime, entry?.title, entry?.text, entry?.money].join("|");
+
+function classifyLogbookEntry(entry) {
+    const haystack = `${entry?.title ?? ""} ${entry?.text ?? ""}`;
+    if (URGENT_LOGBOOK_PATTERN.test(haystack)) return "urgent";
+    if (entry?.highlighted || Math.abs(entry?.money ?? 0) >= CREDITS_NOTABLE) return "notable";
+    return "info";
+}
+
+function classifyCredits(delta) {
+    if (delta <= -CREDITS_URGENT) return "urgent";
+    if (Math.abs(delta) >= CREDITS_NOTABLE) return "notable";
+    return "info";
+}
+
+function classifyRelation(from, to) {
+    // A relation dropping into or further into negative territory means
+    // shots may follow; everything else is worth a mention, not an alarm.
+    if (to < 0 && to < from) return "urgent";
+    return "notable";
+}
 
 function snapshotEvents(gameData, latestSavegame) {
     const events = [];
@@ -160,7 +200,10 @@ function snapshotEvents(gameData, latestSavegame) {
     const online = gameData != null;
 
     if (state.initialized && online !== state.gameOnline) {
-        events.push({ type: online ? "game_online" : "game_offline" });
+        events.push({
+            type: online ? "game_online" : "game_offline",
+            severity: online ? "info" : "notable",
+        });
     }
     state.gameOnline = online;
 
@@ -168,31 +211,46 @@ function snapshotEvents(gameData, latestSavegame) {
         const credits = gameData.playerProfile?.credits;
         if (state.initialized && typeof credits === "number" &&
             typeof state.credits === "number" && credits !== state.credits) {
+            const delta = credits - state.credits;
             events.push({
                 type: "credits_changed",
+                severity: classifyCredits(delta),
                 from: state.credits,
                 to: credits,
-                delta: credits - state.credits,
+                delta,
             });
         }
         if (typeof credits === "number") state.credits = credits;
 
         const missionName = gameData.activeMission?.name ?? gameData.activeMission?.title ?? null;
         if (state.initialized && missionName !== state.missionName) {
-            events.push({ type: "active_mission_changed", from: state.missionName, to: missionName });
+            events.push({
+                type: "active_mission_changed",
+                severity: "notable",
+                from: state.missionName,
+                to: missionName,
+            });
         }
         state.missionName = missionName;
 
         const offers = Array.isArray(gameData.missionOffers) ? gameData.missionOffers.length : null;
         if (state.initialized && offers != null && state.offerCount != null && offers !== state.offerCount) {
-            events.push({ type: "mission_offers_changed", from: state.offerCount, to: offers });
+            events.push({ type: "mission_offers_changed", severity: "info", from: state.offerCount, to: offers });
         }
         if (offers != null) state.offerCount = offers;
 
         const logbook = Array.isArray(gameData.logbook) ? gameData.logbook : [];
         const newEntries = logbook.filter((entry) => !state.logbookKeys.has(logbookKey(entry)));
         if (state.initialized && newEntries.length > 0) {
-            events.push({ type: "logbook_entries", count: newEntries.length, entries: newEntries.slice(0, 20) });
+            const annotated = newEntries
+                .slice(0, 20)
+                .map((entry) => ({ ...entry, severity: classifyLogbookEntry(entry) }));
+            events.push({
+                type: "logbook_entries",
+                severity: annotated.reduce((acc, entry) => maxSeverity(acc, entry.severity), "info"),
+                count: newEntries.length,
+                entries: annotated,
+            });
         }
         state.logbookKeys = new Set(logbook.map(logbookKey));
 
@@ -203,7 +261,13 @@ function snapshotEvents(gameData, latestSavegame) {
             if (name == null || relation == null) continue;
             const previous = state.factionRelations.get(name);
             if (state.initialized && previous != null && previous !== relation) {
-                events.push({ type: "faction_relation_changed", faction: name, from: previous, to: relation });
+                events.push({
+                    type: "faction_relation_changed",
+                    severity: classifyRelation(previous, relation),
+                    faction: name,
+                    from: previous,
+                    to: relation,
+                });
             }
             state.factionRelations.set(name, relation);
         }
@@ -213,6 +277,7 @@ function snapshotEvents(gameData, latestSavegame) {
     if (state.initialized && saveId != null && saveId !== state.latestSavegameId) {
         events.push({
             type: "savegame_parsed",
+            severity: "info",
             savegame_id: saveId,
             filename: latestSavegame?.filename,
         });
@@ -227,7 +292,7 @@ function snapshotEvents(gameData, latestSavegame) {
 
 const server = new McpServer({
     name: "x4-cocaptain",
-    version: "0.1.0",
+    version: "0.2.0",
 });
 
 server.registerTool(
@@ -438,36 +503,147 @@ server.registerTool(
         title: "Wait for game events",
         description: "Long-poll for changes in the live game state: new logbook entries, credit changes, " +
             "active-mission changes, mission-offer changes, faction relation changes, newly parsed savegames, " +
-            "and game online/offline transitions. Returns as soon as something happens, or {quiet: true} " +
-            "after the timeout. Call in a loop to act as a co-captain.",
+            "and game online/offline transitions. Every event carries a severity (info < notable < urgent); " +
+            "min_severity suppresses quieter events, which are counted but not returned. " +
+            "Returns as soon as something qualifying happens, or {quiet: true} after the timeout. " +
+            "Call in a loop to act as a co-captain.",
         inputSchema: {
             timeout_seconds: z.number().int().min(2).max(240).default(60)
                 .describe("How long to wait before returning quiet"),
+            min_severity: z.enum(["info", "notable", "urgent"]).default("info")
+                .describe("Only return events at or above this severity"),
         },
     },
-    async ({ timeout_seconds }) => {
+    async ({ timeout_seconds, min_severity }) => {
         const deadline = Date.now() + timeout_seconds * 1000;
         const startedAt = Date.now();
+        let suppressed = 0;
 
         while (true) {
             const { gameData } = await fetchLiveData();
             const latest = await fetchJson("/api/savegames/latest");
             const latestSavegame = latest.ok ? latest.data : null;
 
-            const events = snapshotEvents(gameData, latestSavegame);
+            const all = snapshotEvents(gameData, latestSavegame);
+            const events = all.filter(
+                (event) => SEVERITY_RANK[event.severity] >= SEVERITY_RANK[min_severity]
+            );
+            suppressed += all.length - events.length;
             const waited = Math.round((Date.now() - startedAt) / 1000);
 
             if (events.length > 0) {
-                return jsonResult({ events, waited_seconds: waited });
+                return jsonResult({ events, suppressed_below_min_severity: suppressed, waited_seconds: waited });
             }
             if (Date.now() >= deadline) {
                 return jsonResult({
                     quiet: true,
+                    suppressed_below_min_severity: suppressed,
                     waited_seconds: waited,
                     game_online: eventState.gameOnline === true,
                 });
             }
             await sleep(2000);
+        }
+    }
+);
+
+/* --------------------------------------------------------------------- TTS */
+
+const execFileAsync = promisify(execFile);
+
+async function commandExists(cmd) {
+    try {
+        await execFileAsync(process.platform === "win32" ? "where" : "which", [cmd]);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+async function speakText(text, rate, voice) {
+    // User-supplied engine wins: X4_TTS_COMMAND is argv-style JSON or a plain
+    // command name; "{text}" placeholders are replaced, otherwise text is
+    // appended as the final argument.
+    const custom = process.env.X4_TTS_COMMAND;
+    if (custom) {
+        let argv;
+        try {
+            argv = JSON.parse(custom);
+        } catch {
+            argv = [custom];
+        }
+        if (!Array.isArray(argv) || argv.length === 0) {
+            throw new Error("X4_TTS_COMMAND must be a command name or a JSON array of command + args");
+        }
+        let substituted = false;
+        argv = argv.map((arg) => {
+            if (typeof arg === "string" && arg.includes("{text}")) {
+                substituted = true;
+                return arg.replaceAll("{text}", text);
+            }
+            return arg;
+        });
+        if (!substituted) argv.push(text);
+        await execFileAsync(argv[0], argv.slice(1), { timeout: 60000 });
+        return `custom (${argv[0]})`;
+    }
+
+    if (process.platform === "win32") {
+        const psText = text.replace(/'/g, "''");
+        const psVoice = voice ? voice.replace(/'/g, "''") : null;
+        const script = [
+            "Add-Type -AssemblyName System.Speech;",
+            "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer;",
+            `$s.Rate = ${rate};`,
+            psVoice ? `try { $s.SelectVoice('${psVoice}') } catch {};` : "",
+            `$s.Speak('${psText}');`,
+        ].join(" ");
+        await execFileAsync("powershell.exe",
+            ["-NoProfile", "-NonInteractive", "-Command", script],
+            { timeout: 60000 });
+        return "windows-sapi";
+    }
+
+    if (process.platform === "darwin") {
+        const args = voice ? ["-v", voice, text] : [text];
+        await execFileAsync("say", args, { timeout: 60000 });
+        return "macos-say";
+    }
+
+    for (const engine of ["spd-say", "espeak"]) {
+        if (await commandExists(engine)) {
+            const args = engine === "spd-say" ? ["--wait", text] : [text];
+            await execFileAsync(engine, args, { timeout: 60000 });
+            return engine;
+        }
+    }
+    throw new Error(
+        "No TTS engine found. On Windows this uses PowerShell SAPI automatically; " +
+        "on Linux install spd-say or espeak, or set X4_TTS_COMMAND."
+    );
+}
+
+server.registerTool(
+    "speak",
+    {
+        title: "Speak text aloud",
+        description: "Read short co-captain advice aloud through the host machine's text-to-speech " +
+            "(Windows SAPI via PowerShell; macOS say; Linux spd-say/espeak; or the X4_TTS_COMMAND override). " +
+            "Use for time-critical or hands-off-keyboard moments while the player is flying; keep it to a sentence or two.",
+        inputSchema: {
+            text: z.string().min(1).max(1000).describe("What to say"),
+            rate: z.number().int().min(-10).max(10).default(1)
+                .describe("Speech rate (Windows SAPI scale; ignored by engines without rate support)"),
+            voice: z.string().optional()
+                .describe("Voice name, e.g. 'Microsoft Zira Desktop' (best-effort; engine default when omitted)"),
+        },
+    },
+    async ({ text, rate, voice }) => {
+        try {
+            const engine = await speakText(text, rate, voice);
+            return jsonResult({ spoken: true, engine, characters: text.length });
+        } catch (error) {
+            return errorResult(`TTS failed: ${error.message}`);
         }
     }
 );

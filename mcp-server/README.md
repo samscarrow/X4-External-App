@@ -1,4 +1,4 @@
-# X4 Co-Captain MCP Server (Phase 1)
+# X4 Co-Captain MCP Server
 
 A standalone [MCP](https://modelcontextprotocol.io) server (stdio transport) that lets Claude act as a
 co-captain for X4: Foundations by reading the data streams X4-External-App already collects:
@@ -7,8 +7,10 @@ co-captain for X4: Foundations by reading the data streams X4-External-App alrea
 |---|---|---|
 | Live telemetry (`POST /api/data` from the in-game Lua extension) | seconds | `get_live_state`, `get_logbook`, `await_events` |
 | Savegame SQLite DB (`data/x4_savegame.db`, filled by the watcher) | minutes (autosave cadence) | `get_fleet`, `get_stations`, `get_blueprints`, `list_savegames`, `get_db_schema`, `query_savegame_db` |
+| Host machine text-to-speech | — | `speak` |
 
-Phase 1 is **read-only** — no tool changes game state or writes to the database.
+All game-facing tools are **read-only** — nothing changes game state or writes to the database.
+`speak` is the only tool with a side effect, and it only makes noise.
 
 ## Prerequisites
 
@@ -34,6 +36,34 @@ npm run smoke   # optional: lists tools and exercises a few calls
 |---|---|---|
 | `X4_APP_URL` | `http://127.0.0.1:8080` | Base URL of the running X4-External-App server |
 | `X4_DB_PATH` | `../data/x4_savegame.db` (relative to this folder) | Savegame SQLite database |
+| `X4_CREDITS_NOTABLE` | `100000` | Credit delta (abs) at which a change becomes `notable` |
+| `X4_CREDITS_URGENT` | `1000000` | Credit **loss** at which a change becomes `urgent` |
+| `X4_URGENT_REGEX` | `attack\|under fire\|destroy\|hostile\|boarding\|emergency\|distress` | Logbook pattern (case-insensitive) that marks an entry `urgent` |
+| `X4_TTS_COMMAND` | *(platform default)* | TTS override: a command name, or a JSON array of command + args; `{text}` placeholders are substituted, otherwise the text is appended as the last argument |
+
+## Event severity
+
+Every event from `await_events` carries a severity — `info` < `notable` < `urgent` — and the
+tool takes `min_severity` to suppress the quiet stuff (suppressed events are counted in the
+response, never silently lost):
+
+| Event | Severity |
+|---|---|
+| `logbook_entries` | per entry: `urgent` on combat pattern match, `notable` if highlighted or money ≥ notable threshold, else `info`; the event takes the max |
+| `credits_changed` | `urgent` on a loss ≥ urgent threshold, `notable` on \|delta\| ≥ notable threshold, else `info` |
+| `faction_relation_changed` | `urgent` when the relation drops while negative (shots may follow), else `notable` |
+| `active_mission_changed`, `game_offline` | `notable` |
+| `mission_offers_changed`, `savegame_parsed`, `game_online` | `info` |
+
+## Text-to-speech (`speak`)
+
+`speak` reads a sentence or two aloud on the machine running the MCP server, so advice reaches
+you while you fly without alt-tabbing:
+
+- **Windows**: PowerShell + System.Speech (SAPI) — works out of the box; optional `voice`
+  (e.g. `Microsoft Zira Desktop`) and `rate` (−10…10)
+- **macOS**: `say`; **Linux**: `spd-say` or `espeak` if installed
+- Anything else: set `X4_TTS_COMMAND`, e.g. `["wsl-notify-send.exe","{text}"]`
 
 ## Register with Claude Code (Windows)
 
@@ -67,8 +97,9 @@ Near-real-time loop — `await_events` blocks until something happens (new logbo
 credit deltas, mission changes, faction relation changes, newly parsed savegames), so a
 prompt like this makes Claude sit in the copilot seat:
 
-> Call await_events in a loop. When events arrive, tell me only what matters
-> (attacks, mission changes, big transactions) and give one-line advice. Stay quiet otherwise.
+> Call await_events with min_severity "notable" in a loop. Speak urgent events aloud with
+> the speak tool in one short sentence; summarize notable ones in text with one line of
+> advice. Stay quiet otherwise.
 
 In Claude Code, the `/loop` command is a convenient way to keep that running.
 
@@ -76,7 +107,8 @@ In Claude Code, the `/loop` command is a convenient way to keep that running.
 
 - `get_live_state [section]` — summary, or one of: `playerProfile`, `activeMission`, `missionOffers`, `logbook`, `playerGoals`, `currentResearch`, `transactionLog`, `factions`
 - `get_logbook [limit] [search]` — recent logbook entries, filterable
-- `await_events [timeout_seconds]` — long-poll for game events (see above)
+- `await_events [timeout_seconds] [min_severity]` — long-poll for game events (see above)
+- `speak <text> [rate] [voice]` — read advice aloud via host TTS
 - `list_savegames` — parsed savegames with metadata
 - `get_fleet [savegame_id]` — ships from a savegame (defaults to latest)
 - `get_stations [savegame_id]` — stations from a savegame
@@ -86,7 +118,8 @@ In Claude Code, the `/loop` command is a convenient way to keep that running.
 
 ## Roadmap
 
-- **Phase 2**: server-side event severity tiers, richer diffing, text-to-speech output
+- ~~**Phase 1**: read-only tools + `await_events` long-poll~~ ✓
+- ~~**Phase 2**: event severity tiers, id-based logbook diffing, text-to-speech output~~ ✓
 - **Phase 3**: write path — command queue piggybacked on the Lua extension's POST cycle
   (in-game notifications, then structured commands)
 - **Phase 4**: fleet orders via SirNukes Mod Support APIs / named pipes; encyclopedia tools
