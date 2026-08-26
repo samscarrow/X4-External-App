@@ -753,6 +753,65 @@ async function commandExists(cmd) {
     }
 }
 
+/**
+ * Windows TTS. Prefers the modern WinRT engine (Windows.Media.SpeechSynthesis),
+ * which is the only way to reach the neural "Natural" voices installable via
+ * Settings > Accessibility > Narrator > Add natural voices. Picks, in order:
+ * a WinRT voice matching the requested name, any installed "(Natural)" voice,
+ * then falls back to classic SAPI (System.Speech) with the requested voice.
+ * Runs in powershell.exe 5.1 - pwsh 7 has no WinRT projection.
+ */
+async function speakWindows(text, rate, voice) {
+    const psQuote = (s) => `'${String(s).replace(/'/g, "''")}'`;
+    // SAPI rate is -10..10 around 0; WinRT SpeakingRate is a 0.5..6.0 multiplier.
+    const winrtRate = Math.min(6, Math.max(0.5, Math.pow(2, rate / 10)));
+    const script = `
+$ErrorActionPreference = 'Stop'
+$requested = ${psQuote(voice ?? "")}
+$text = ${psQuote(text)}
+$null = [Windows.Media.SpeechSynthesis.SpeechSynthesizer, Windows.Media.SpeechSynthesis, ContentType=WindowsRuntime]
+Add-Type -AssemblyName System.Runtime.WindowsRuntime
+$voices = [Windows.Media.SpeechSynthesis.SpeechSynthesizer]::AllVoices
+$pick = $null
+if ($requested) { $pick = $voices | Where-Object { $_.DisplayName -like "*$requested*" } | Select-Object -First 1 }
+if (-not $pick) { $pick = $voices | Where-Object { $_.DisplayName -like '*Natural*' } | Select-Object -First 1 }
+if ($pick) {
+    $synth = New-Object Windows.Media.SpeechSynthesis.SpeechSynthesizer
+    $synth.Voice = $pick
+    $synth.Options.SpeakingRate = ${winrtRate}
+    $asTask = ([System.WindowsRuntimeSystemExtensions].GetMethods() |
+        Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation\`1' } |
+        Select-Object -First 1).MakeGenericMethod([Windows.Media.SpeechSynthesis.SpeechSynthesisStream])
+    $task = $asTask.Invoke($null, @($synth.SynthesizeTextToStreamAsync($text)))
+    $task.Wait() | Out-Null
+    $stream = $task.Result
+    $reader = New-Object System.IO.BinaryReader ([System.IO.WindowsRuntimeStreamExtensions]::AsStreamForRead($stream))
+    $wav = Join-Path $env:TEMP ("x4tts-" + [guid]::NewGuid().ToString('n') + ".wav")
+    try {
+        [System.IO.File]::WriteAllBytes($wav, $reader.ReadBytes($stream.Size))
+        (New-Object System.Media.SoundPlayer $wav).PlaySync()
+    } finally {
+        Remove-Item $wav -ErrorAction SilentlyContinue
+    }
+    Write-Output ("winrt|" + $pick.DisplayName)
+} else {
+    Add-Type -AssemblyName System.Speech
+    $s = New-Object System.Speech.Synthesis.SpeechSynthesizer
+    $s.Rate = ${rate}
+    if ($requested) { try { $s.SelectVoice($requested) } catch {} }
+    $s.Speak($text)
+    Write-Output ("sapi|" + $s.Voice.Name)
+}`;
+    const encoded = Buffer.from(script, "utf16le").toString("base64");
+    const { stdout } = await execFileAsync("powershell.exe",
+        ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+        { timeout: 60000 });
+    const [engine, voiceName] = stdout.trim().split("|");
+    return engine === "winrt"
+        ? `windows-winrt (${voiceName})`
+        : `windows-sapi (${voiceName})`;
+}
+
 async function speakText(text, rate, voice) {
     // User-supplied engine wins: X4_TTS_COMMAND is argv-style JSON or a plain
     // command name; "{text}" placeholders are replaced, otherwise text is
@@ -782,19 +841,7 @@ async function speakText(text, rate, voice) {
     }
 
     if (process.platform === "win32") {
-        const psText = text.replace(/'/g, "''");
-        const psVoice = voice ? voice.replace(/'/g, "''") : null;
-        const script = [
-            "Add-Type -AssemblyName System.Speech;",
-            "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer;",
-            `$s.Rate = ${rate};`,
-            psVoice ? `try { $s.SelectVoice('${psVoice}') } catch {};` : "",
-            `$s.Speak('${psText}');`,
-        ].join(" ");
-        await execFileAsync("powershell.exe",
-            ["-NoProfile", "-NonInteractive", "-Command", script],
-            { timeout: 60000 });
-        return "windows-sapi";
+        return speakWindows(text, rate, voice ?? process.env.X4_TTS_VOICE);
     }
 
     if (process.platform === "darwin") {
@@ -821,14 +868,16 @@ server.registerTool(
     {
         title: "Speak text aloud",
         description: "Read short co-captain advice aloud through the host machine's text-to-speech " +
-            "(Windows SAPI via PowerShell; macOS say; Linux spd-say/espeak; or the X4_TTS_COMMAND override). " +
+            "(Windows: WinRT neural 'Natural' voices when installed, else SAPI; macOS say; " +
+            "Linux spd-say/espeak; or the X4_TTS_COMMAND override). " +
             "Use for time-critical or hands-off-keyboard moments while the player is flying; keep it to a sentence or two.",
         inputSchema: {
             text: z.string().min(1).max(1000).describe("What to say"),
             rate: z.number().int().min(-10).max(10).default(1)
                 .describe("Speech rate (Windows SAPI scale; ignored by engines without rate support)"),
             voice: z.string().optional()
-                .describe("Voice name, e.g. 'Microsoft Zira Desktop' (best-effort; engine default when omitted)"),
+                .describe("Voice name substring, e.g. 'Aria' or 'Microsoft Zira Desktop' (best-effort; " +
+                    "defaults to X4_TTS_VOICE env, then any installed Natural voice, then engine default)"),
         },
     },
     async ({ text, rate, voice }) => {

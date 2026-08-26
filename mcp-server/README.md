@@ -48,6 +48,7 @@ npm run smoke   # optional: lists tools and exercises a few calls
 | `X4_CREDITS_URGENT` | `1000000` | Credit **loss** at which a change becomes `urgent` |
 | `X4_URGENT_REGEX` | `attack\|under fire\|destroy\|hostile\|boarding\|emergency\|distress` | Logbook pattern (case-insensitive) that marks an entry `urgent` |
 | `X4_TTS_COMMAND` | *(platform default)* | TTS override: a command name, or a JSON array of command + args; `{text}` placeholders are substituted, otherwise the text is appended as the last argument |
+| `X4_TTS_VOICE` | *(auto)* | Default voice for `speak` when the call names none. Windows: a display-name substring, e.g. `Aria`; when unset, any installed neural "Natural" voice is preferred automatically |
 
 ## Events journal
 
@@ -78,8 +79,13 @@ response, never silently lost):
 `speak` reads a sentence or two aloud on the machine running the MCP server, so advice reaches
 you while you fly without alt-tabbing:
 
-- **Windows**: PowerShell + System.Speech (SAPI) — works out of the box; optional `voice`
-  (e.g. `Microsoft Zira Desktop`) and `rate` (−10…10)
+- **Windows**: prefers the WinRT engine (`Windows.Media.SpeechSynthesis`) with a neural
+  **Natural** voice when one is installed — far less robotic than SAPI. Install one via
+  *Settings → Accessibility → Narrator → Add natural voices* (free, offline; e.g.
+  Microsoft Aria/Jenny/Guy Natural); it is then picked automatically, or pin one with
+  `X4_TTS_VOICE`/`voice` (substring match, e.g. `Aria`). Without a match the classic
+  System.Speech (SAPI) path is used (e.g. `Microsoft Zira Desktop`); `rate` (−10…10)
+  applies to both engines
 - **macOS**: `say`; **Linux**: `spd-say` or `espeak` if installed
 - Anything else: set `X4_TTS_COMMAND`, e.g. `["wsl-notify-send.exe","{text}"]`
 
