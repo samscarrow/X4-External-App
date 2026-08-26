@@ -75,5 +75,67 @@
                 </do_else>
             </actions>
         </cue>
+        <!--
+          fly_my_ship_to issues a real MoveWait ("Fly and Wait") order to the ship
+          the player is aboard - the same order the map's right-click move gives.
+          Guards: must be aboard a player-owned ship (not a spacesuit) with an
+          assigned NPC captain, and the player must not be at the helm themselves.
+          Payload: { sector = <macro id or exact known sector name>, x/y/z = km }.
+          No sector -> the player's current sector (needs an x/y/z offset to be
+          meaningful there).
+        -->
+        <cue name="CoCaptain_OnFlyMyShipTo" instantiate="true">
+            <conditions>
+                <event_ui_triggered screen="'CoCaptainBridge'" control="'fly_my_ship_to'" />
+            </conditions>
+            <actions>
+                <set_value name="$Ship" exact="player.occupiedship" />
+                <do_if value="not $Ship.exists or $Ship.isclass.spacesuit">
+                    <show_notification text="'Co-captain: you are not aboard a ship'" />
+                </do_if>
+                <do_elseif value="not $Ship.isplayerowned">
+                    <show_notification text="'Co-captain: ' + $Ship.knownname + ' is not our ship to command'" />
+                </do_elseif>
+                <do_elseif value="$Ship.pilot == player.entity">
+                    <show_notification text="'Co-captain: you have the helm - set guidance instead'" />
+                </do_elseif>
+                <do_elseif value="not @$Ship.assignedpilot">
+                    <show_notification text="'Co-captain: ' + $Ship.knownname + ' has no captain to take the order'" />
+                </do_elseif>
+                <do_else>
+                    <do_if value="event.param3.{'sector'}?">
+                        <set_value name="$SectorArg" exact="event.param3.{'sector'}" />
+                        <set_value name="$WantedMacro" exact="if macro.{$SectorArg}? then macro.{$SectorArg} else null" />
+                        <set_value name="$Sector" exact="null" />
+                        <find_sector name="$AllSectors" space="player.galaxy" multiple="true" />
+                        <do_all exact="$AllSectors.count" counter="$i">
+                            <do_if value="($WantedMacro and $AllSectors.{$i}.macro == $WantedMacro) or $AllSectors.{$i}.knownname == $SectorArg">
+                                <set_value name="$Sector" exact="$AllSectors.{$i}" />
+                            </do_if>
+                        </do_all>
+                    </do_if>
+                    <do_else>
+                        <set_value name="$Sector" exact="player.sector" />
+                    </do_else>
+                    <do_if value="$Sector">
+                        <set_value name="$Destination" exact="$Sector" />
+                        <do_if value="event.param3.{'x'}? or event.param3.{'y'}? or event.param3.{'z'}?">
+                            <set_value name="$X" exact="if event.param3.{'x'}? then event.param3.{'x'} else 0" />
+                            <set_value name="$Y" exact="if event.param3.{'y'}? then event.param3.{'y'} else 0" />
+                            <set_value name="$Z" exact="if event.param3.{'z'}? then event.param3.{'z'} else 0" />
+                            <set_value name="$Destination" exact="[$Sector, position.[$X * 1km, $Y * 1km, $Z * 1km]]" />
+                        </do_if>
+                        <create_order id="'MoveWait'" object="$Ship" immediate="true">
+                            <param name="destination" value="$Destination" />
+                        </create_order>
+                        <show_notification text="'Co-captain: ordered ' + $Ship.knownname + ' to fly to ' + $Sector.knownname" />
+                        <write_to_logbook category="general" title="'Co-captain order'" text="'Ordered ' + $Ship.knownname + ' (captain ' + $Ship.assignedpilot.knownname + ') to fly to ' + $Sector.knownname" />
+                    </do_if>
+                    <do_else>
+                        <show_notification text="'Co-captain: unknown sector ' + $SectorArg" />
+                    </do_else>
+                </do_else>
+            </actions>
+        </cue>
     </cues>
 </mdscript>

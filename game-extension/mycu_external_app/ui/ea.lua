@@ -109,6 +109,18 @@ function external.executeCommand (command)
         return true
     end
 
+    if command.type == "fly_my_ship_to" then
+        local out = {}
+        if type(payload.sector) == "string" and payload.sector ~= "" then
+            out.sector = payload.sector
+        end
+        if type(payload.x) == "number" then out.x = payload.x end
+        if type(payload.y) == "number" then out.y = payload.y end
+        if type(payload.z) == "number" then out.z = payload.z end
+        AddUITriggeredEvent("CoCaptainBridge", "fly_my_ship_to", out)
+        return true
+    end
+
     if command.type == "set_guidance" then
         local out = {}
         if payload.clear == true then

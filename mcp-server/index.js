@@ -732,6 +732,29 @@ server.registerTool(
 );
 
 server.registerTool(
+    "fly_my_ship_to",
+    {
+        title: "Order the player's ship to fly somewhere",
+        description: "Issue a REAL MoveWait ('Fly and Wait') order to the ship the player is currently " +
+            "aboard - the captain will actually fly there. This commands a ship, so it is strictly " +
+            "on-request: NEVER call it unless the player explicitly asked to be flown somewhere in their " +
+            "latest request. The game refuses it (with an in-game notice) unless the player is aboard a " +
+            "player-owned ship with an NPC captain and is not piloting themselves. The executed ack means " +
+            "the order was dispatched; the in-game notification and logbook entry confirm acceptance.",
+        inputSchema: {
+            sector: z.string().optional()
+                .describe("Destination sector: macro id (e.g. 'cluster_14_sector001_macro') or exact known " +
+                    "sector name (e.g. 'Argon Prime', case-sensitive). Omitted: the player's current sector " +
+                    "(give x/y/z to make that meaningful)"),
+            x: z.number().optional().describe("East-west offset from sector centre, km"),
+            y: z.number().optional().describe("Vertical offset from sector centre, km"),
+            z: z.number().optional().describe("North-south offset from sector centre, km"),
+        },
+    },
+    async ({ sector, x, y, z }) => enqueueCommand("fly_my_ship_to", { sector, x, y, z })
+);
+
+server.registerTool(
     "get_command_queue",
     {
         title: "Inspect command queue",
