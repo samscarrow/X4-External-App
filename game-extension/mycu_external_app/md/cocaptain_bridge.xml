@@ -14,7 +14,7 @@
                 <event_ui_triggered screen="'CoCaptainBridge'" control="'notify'" />
             </conditions>
             <actions>
-                <show_notification text="event.param3.{'text'}" />
+                <show_notification text="event.param3.{'$text'}" />
             </actions>
         </cue>
 
@@ -23,7 +23,7 @@
                 <event_ui_triggered screen="'CoCaptainBridge'" control="'logbook'" />
             </conditions>
             <actions>
-                <write_to_logbook category="general" title="event.param3.{'title'}" text="event.param3.{'text'}" />
+                <write_to_logbook category="general" title="event.param3.{'$title'}" text="event.param3.{'$text'}" />
             </actions>
         </cue>
 
@@ -39,13 +39,13 @@
                 <event_ui_triggered screen="'CoCaptainBridge'" control="'set_guidance'" />
             </conditions>
             <actions>
-                <do_if value="@event.param3.{'clear'}">
+                <do_if value="@event.param3.{'$clear'}">
                     <signal_cue_instantly cue="md.Guidance.EndGuidance" param="true" />
                     <show_notification text="'Co-captain: guidance cleared'" />
                 </do_if>
                 <do_else>
-                    <do_if value="event.param3.{'sector'}?">
-                        <set_value name="$SectorArg" exact="event.param3.{'sector'}" />
+                    <do_if value="event.param3.{'$sector'}?">
+                        <set_value name="$SectorArg" exact="event.param3.{'$sector'}" />
                         <set_value name="$WantedMacro" exact="if macro.{$SectorArg}? then macro.{$SectorArg} else null" />
                         <set_value name="$Sector" exact="null" />
                         <find_sector name="$AllSectors" space="player.galaxy" multiple="true" />
@@ -60,10 +60,10 @@
                     </do_else>
                     <do_if value="$Sector">
                         <set_value name="$Offset" exact="null" />
-                        <do_if value="event.param3.{'x'}? or event.param3.{'y'}? or event.param3.{'z'}?">
-                            <set_value name="$X" exact="if event.param3.{'x'}? then event.param3.{'x'} else 0" />
-                            <set_value name="$Y" exact="if event.param3.{'y'}? then event.param3.{'y'} else 0" />
-                            <set_value name="$Z" exact="if event.param3.{'z'}? then event.param3.{'z'} else 0" />
+                        <do_if value="event.param3.{'$x'}? or event.param3.{'$y'}? or event.param3.{'$z'}?">
+                            <set_value name="$X" exact="if event.param3.{'$x'}? then event.param3.{'$x'} else 0" />
+                            <set_value name="$Y" exact="if event.param3.{'$y'}? then event.param3.{'$y'} else 0" />
+                            <set_value name="$Z" exact="if event.param3.{'$z'}? then event.param3.{'$z'} else 0" />
                             <set_value name="$Offset" exact="position.[$X * 1km, $Y * 1km, $Z * 1km]" />
                         </do_if>
                         <signal_cue_instantly cue="md.Guidance.NewTarget" param="[$Sector, $Offset]" />
@@ -91,8 +91,8 @@
                 <event_ui_triggered screen="'CoCaptainBridge'" control="'order_ship_to'" />
             </conditions>
             <actions>
-                <do_if value="event.param3.{'ship'}?">
-                    <set_value name="$ShipArg" exact="event.param3.{'ship'}" />
+                <do_if value="event.param3.{'$ship'}?">
+                    <set_value name="$ShipArg" exact="event.param3.{'$ship'}" />
                     <set_value name="$Ship" exact="null" />
                     <set_value name="$Matches" exact="0" />
                     <find_ship name="$AllShips" space="player.galaxy" owner="faction.player" multiple="true" />
@@ -126,8 +126,8 @@
                         <show_notification text="'Co-captain: ' + $Ship.knownname + ' has no captain to take the order'" />
                     </do_elseif>
                     <do_else>
-                        <do_if value="event.param3.{'sector'}?">
-                            <set_value name="$SectorArg" exact="event.param3.{'sector'}" />
+                        <do_if value="event.param3.{'$sector'}?">
+                            <set_value name="$SectorArg" exact="event.param3.{'$sector'}" />
                             <set_value name="$WantedMacro" exact="if macro.{$SectorArg}? then macro.{$SectorArg} else null" />
                             <set_value name="$DestSector" exact="null" />
                             <find_sector name="$AllSectors" space="player.galaxy" multiple="true" />
@@ -142,10 +142,10 @@
                         </do_else>
                         <do_if value="$DestSector">
                             <set_value name="$Destination" exact="$DestSector" />
-                            <do_if value="event.param3.{'x'}? or event.param3.{'y'}? or event.param3.{'z'}?">
-                                <set_value name="$X" exact="if event.param3.{'x'}? then event.param3.{'x'} else 0" />
-                                <set_value name="$Y" exact="if event.param3.{'y'}? then event.param3.{'y'} else 0" />
-                                <set_value name="$Z" exact="if event.param3.{'z'}? then event.param3.{'z'} else 0" />
+                            <do_if value="event.param3.{'$x'}? or event.param3.{'$y'}? or event.param3.{'$z'}?">
+                                <set_value name="$X" exact="if event.param3.{'$x'}? then event.param3.{'$x'} else 0" />
+                                <set_value name="$Y" exact="if event.param3.{'$y'}? then event.param3.{'$y'} else 0" />
+                                <set_value name="$Z" exact="if event.param3.{'$z'}? then event.param3.{'$z'} else 0" />
                                 <set_value name="$Destination" exact="[$DestSector, position.[$X * 1km, $Y * 1km, $Z * 1km]]" />
                             </do_if>
                             <create_order id="'MoveWait'" object="$Ship" immediate="true" name="$MoveOrder">
@@ -200,8 +200,8 @@
                 <event_ui_triggered screen="'CoCaptainBridge'" control="'clear_ship_orders'" />
             </conditions>
             <actions>
-                <do_if value="event.param3.{'ship'}?">
-                    <set_value name="$ShipArg" exact="event.param3.{'ship'}" />
+                <do_if value="event.param3.{'$ship'}?">
+                    <set_value name="$ShipArg" exact="event.param3.{'$ship'}" />
                     <set_value name="$Ship" exact="null" />
                     <set_value name="$Matches" exact="0" />
                     <find_ship name="$AllShips" space="player.galaxy" owner="faction.player" multiple="true" />
@@ -246,7 +246,7 @@
                 <event_ui_triggered screen="'CoCaptainBridge'" control="'ping_ship'" />
             </conditions>
             <actions>
-                <set_value name="$ShipArg" exact="event.param3.{'ship'}" />
+                <set_value name="$ShipArg" exact="event.param3.{'$ship'}" />
                 <set_value name="$Ship" exact="null" />
                 <set_value name="$Matches" exact="0" />
                 <find_ship name="$AllShips" space="player.galaxy" owner="faction.player" multiple="true" />

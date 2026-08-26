@@ -77,6 +77,19 @@ The patch adds three functions and one call in that callback:
   same djfhe_http request API as the data POST (tables are JSON-encoded with
   `Content-Type: application/json` automatically).
 
+### Lua → MD table key convention (learned the hard way)
+
+When a Lua table crosses into MD via `AddUITriggeredEvent`, **the engine prefixes every
+string key with `$`**: Lua `{ ship = "VYU-077" }` arrives in MD as key `$ship`, readable
+as `event.param3.{'$ship'}` (or `event.param3.$ship`). Reading `{'ship'}` fails with
+`Property lookup failed: event.param3.ship` — visible only in `debug.log` (launch with
+`-logfile debug.log`), while the Lua-side ack still reports `executed`. This bit every
+command type at once on 2026-08-26: notifications silently showed nothing, logbook
+writes failed, and `set_guidance` fell back to the player's current sector. Convention
+confirmed against sn_mod_support_apis (`interact_menu_api.xml` reads
+`event.param3.$id` for a plain Lua `id` key). Keep Lua keys **unprefixed** and MD
+lookups **`$`-prefixed**.
+
 ### 2. Mission Director: execute commands (`md/cocaptain_bridge.xml`)
 
 Listens for the UI events and performs the visible action. MD is the right layer: it can
