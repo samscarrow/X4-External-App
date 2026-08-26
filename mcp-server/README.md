@@ -48,7 +48,8 @@ npm run smoke   # optional: lists tools and exercises a few calls
 | `X4_CREDITS_URGENT` | `1000000` | Credit **loss** at which a change becomes `urgent` |
 | `X4_URGENT_REGEX` | `attack\|under fire\|destroy\|hostile\|boarding\|emergency\|distress` | Logbook pattern (case-insensitive) that marks an entry `urgent` |
 | `X4_TTS_COMMAND` | *(platform default)* | TTS override: a command name, or a JSON array of command + args; `{text}` placeholders are substituted, otherwise the text is appended as the last argument |
-| `X4_TTS_VOICE` | *(auto)* | Default voice for `speak` when the call names none. Windows: a display-name substring, e.g. `Aria`; when unset, any installed neural "Natural" voice is preferred automatically |
+| `X4_TTS_VOICE` | *(auto)* | Default voice for `speak` when the call names none: a Piper model or Windows voice name substring (e.g. `alan`, `Aria`). Unset: first Piper model, else any Windows "Natural" voice |
+| `X4_PIPER_DIR` | `mcp-server/piper` | Piper install directory (`piper.exe` + `voices/*.onnx`) |
 
 ## Events journal
 
@@ -79,13 +80,17 @@ response, never silently lost):
 `speak` reads a sentence or two aloud on the machine running the MCP server, so advice reaches
 you while you fly without alt-tabbing:
 
-- **Windows**: prefers the WinRT engine (`Windows.Media.SpeechSynthesis`) with a neural
-  **Natural** voice when one is installed — far less robotic than SAPI. Install one via
-  *Settings → Accessibility → Narrator → Add natural voices* (free, offline; e.g.
-  Microsoft Aria/Jenny/Guy Natural); it is then picked automatically, or pin one with
-  `X4_TTS_VOICE`/`voice` (substring match, e.g. `Aria`). Without a match the classic
-  System.Speech (SAPI) path is used (e.g. `Microsoft Zira Desktop`); `rate` (−10…10)
-  applies to both engines
+- **Piper (preferred)**: local neural TTS ([rhasspy/piper](https://github.com/rhasspy/piper)) —
+  natural-sounding, offline, free. Install with `scripts\install-piper.ps1` (binary +
+  `en_GB-alan-medium` voice into `mcp-server\piper\`, gitignored); add more voices with
+  `-Voice <name>` from the [voice catalog](https://huggingface.co/rhasspy/piper-voices)
+  ([samples](https://rhasspy.github.io/piper-samples/)). The first model in
+  `piper\voices\` is the default; select others via `X4_TTS_VOICE`/`voice` (substring,
+  e.g. `alan`). A `voice` matching no Piper model falls through to the OS engines below.
+- **Windows**: WinRT engine (`Windows.Media.SpeechSynthesis`) with a neural **Natural**
+  voice when one is installed (*Settings → Accessibility → Narrator → Add natural
+  voices*, e.g. Aria/Jenny), else classic System.Speech SAPI (e.g. `Microsoft Zira
+  Desktop`); `rate` (−10…10) applies everywhere (Piper maps it to `length_scale`)
 - **macOS**: `say`; **Linux**: `spd-say` or `espeak` if installed
 - Anything else: set `X4_TTS_COMMAND`, e.g. `["wsl-notify-send.exe","{text}"]`
 

@@ -22,6 +22,7 @@
 
 import path from "node:path";
 import fs from "node:fs";
+import os from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -754,6 +755,65 @@ async function commandExists(cmd) {
 }
 
 /**
+ * Piper: local neural TTS (github.com/rhasspy/piper), installed by
+ * scripts/install-piper.ps1 into ./piper with models in ./piper/voices.
+ * Used ahead of the OS engines when present. Returns null when piper (or a
+ * model matching an explicitly requested voice) is not available, so the
+ * caller falls through - e.g. voice:"Zira" still reaches the Windows engines.
+ */
+function findPiper(requestedVoice) {
+    const piperDir = process.env.X4_PIPER_DIR || path.join(__dirname, "piper");
+    const exe = path.join(piperDir, process.platform === "win32" ? "piper.exe" : "piper");
+    if (!fs.existsSync(exe)) return null;
+    const voicesDir = path.join(piperDir, "voices");
+    let models;
+    try {
+        models = fs.readdirSync(voicesDir).filter((f) => f.endsWith(".onnx")).sort();
+    } catch {
+        return null;
+    }
+    if (models.length === 0) return null;
+    let model = models[0];
+    if (requestedVoice) {
+        const match = models.find((m) => m.toLowerCase().includes(requestedVoice.toLowerCase()));
+        if (!match) return null;
+        model = match;
+    }
+    return { exe, model: path.join(voicesDir, model), modelName: path.basename(model, ".onnx") };
+}
+
+async function speakPiper(piper, text, rate) {
+    // SAPI-style rate -10..10 -> piper length_scale (inverse: bigger = slower)
+    const lengthScale = Math.min(2, Math.max(0.5, Math.pow(2, -rate / 10)));
+    const wav = path.join(os.tmpdir(), `x4tts-${process.pid}-${Date.now()}.wav`);
+    try {
+        await new Promise((resolve, reject) => {
+            const child = execFile(
+                piper.exe,
+                ["--model", piper.model, "--length_scale", String(lengthScale), "--output_file", wav],
+                { timeout: 60000 },
+                (error) => (error ? reject(error) : resolve())
+            );
+            child.stdin.end(text);
+        });
+        if (process.platform === "win32") {
+            await execFileAsync("powershell.exe",
+                ["-NoProfile", "-NonInteractive", "-Command",
+                    `(New-Object System.Media.SoundPlayer '${wav.replace(/'/g, "''")}').PlaySync()`],
+                { timeout: 60000 });
+        } else if (process.platform === "darwin") {
+            await execFileAsync("afplay", [wav], { timeout: 60000 });
+        } else {
+            const player = (await commandExists("paplay")) ? "paplay" : "aplay";
+            await execFileAsync(player, [wav], { timeout: 60000 });
+        }
+    } finally {
+        fs.rmSync(wav, { force: true });
+    }
+    return `piper (${piper.modelName})`;
+}
+
+/**
  * Windows TTS. Prefers the modern WinRT engine (Windows.Media.SpeechSynthesis),
  * which is the only way to reach the neural "Natural" voices installable via
  * Settings > Accessibility > Narrator > Add natural voices. Picks, in order:
@@ -840,8 +900,16 @@ async function speakText(text, rate, voice) {
         return `custom (${argv[0]})`;
     }
 
+    const wantedVoice = voice ?? process.env.X4_TTS_VOICE;
+
+    // Local neural TTS beats every OS engine when installed
+    const piper = findPiper(wantedVoice);
+    if (piper) {
+        return speakPiper(piper, text, rate);
+    }
+
     if (process.platform === "win32") {
-        return speakWindows(text, rate, voice ?? process.env.X4_TTS_VOICE);
+        return speakWindows(text, rate, wantedVoice);
     }
 
     if (process.platform === "darwin") {
@@ -867,17 +935,19 @@ server.registerTool(
     "speak",
     {
         title: "Speak text aloud",
-        description: "Read short co-captain advice aloud through the host machine's text-to-speech " +
-            "(Windows: WinRT neural 'Natural' voices when installed, else SAPI; macOS say; " +
-            "Linux spd-say/espeak; or the X4_TTS_COMMAND override). " +
+        description: "Read short co-captain advice aloud through the host machine's text-to-speech. " +
+            "Engine order: X4_TTS_COMMAND override; Piper local neural TTS when installed " +
+            "(mcp-server/piper, see scripts/install-piper.ps1); then the OS engine " +
+            "(Windows WinRT Natural voices or SAPI; macOS say; Linux spd-say/espeak). " +
             "Use for time-critical or hands-off-keyboard moments while the player is flying; keep it to a sentence or two.",
         inputSchema: {
             text: z.string().min(1).max(1000).describe("What to say"),
             rate: z.number().int().min(-10).max(10).default(1)
-                .describe("Speech rate (Windows SAPI scale; ignored by engines without rate support)"),
+                .describe("Speech rate, SAPI scale (Piper maps it to length_scale)"),
             voice: z.string().optional()
-                .describe("Voice name substring, e.g. 'Aria' or 'Microsoft Zira Desktop' (best-effort; " +
-                    "defaults to X4_TTS_VOICE env, then any installed Natural voice, then engine default)"),
+                .describe("Voice name substring, e.g. 'alan' (Piper model) or 'Zira' (Windows voice; " +
+                    "a name matching no Piper model falls through to the OS engines). " +
+                    "Defaults to X4_TTS_VOICE env, then the first Piper model, then any Windows Natural voice"),
         },
     },
     async ({ text, rate, voice }) => {
