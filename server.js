@@ -27,6 +27,11 @@ const SavegameWatcher = require('./services/savegameWatcher');
 app.use(bodyParser.json({ limit: '50mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
 
+// Command types the co-captain may enqueue for the in-game bridge
+const ALLOWED_COMMAND_TYPES = ['notify', 'logbook'];
+const COMMAND_QUEUE_LIMIT = 20;
+const COMMAND_HISTORY_LIMIT = 100;
+
 class Server {
     dataObject = null;
     updatePending = false;
@@ -34,6 +39,9 @@ class Server {
     db = null;
     savegameParser = null;
     savegameWatcher = null;
+    commandQueue = [];
+    commandHistory = [];
+    nextCommandId = 1;
 
     constructor (app, hostname, port) {
         this.app = app;
@@ -93,6 +101,34 @@ class Server {
         }
 
         return Array.from(map.values()).sort((a, b) => (b.time || 0) - (a.time || 0));
+    }
+
+    /**
+     * Hand all pending commands to the game and move them to history as
+     * 'delivered'. 'executed' requires an ack from the in-game bridge.
+     */
+    deliverPendingCommands () {
+        if (this.commandQueue.length === 0) {
+            return [];
+        }
+        const commands = this.commandQueue.splice(0);
+        const deliveredAt = new Date().toISOString();
+        for (const command of commands) {
+            command.status = 'delivered';
+            command.delivered_at = deliveredAt;
+            this.pushCommandHistory(command);
+        }
+        return commands;
+    }
+
+    /**
+     * Append to command history, keeping it bounded
+     */
+    pushCommandHistory (command) {
+        this.commandHistory.push(command);
+        if (this.commandHistory.length > COMMAND_HISTORY_LIMIT) {
+            this.commandHistory.splice(0, this.commandHistory.length - COMMAND_HISTORY_LIMIT);
+        }
     }
 
     /**
@@ -242,7 +278,74 @@ class Server {
                 }
             }
 
-            response.send('ok');
+            // Piggyback pending co-captain commands on the reply. The stock
+            // extension ignores the response body, so this is backward
+            // compatible; a command-bridge-aware extension executes them and
+            // acknowledges via POST /api/commands/ack.
+            response.json({ status: 'ok', commands: this.deliverPendingCommands() });
+        });
+
+        /**
+         * Command queue endpoints (co-captain write path)
+         */
+
+        // Enqueue a command for the in-game bridge
+        this.app.post('/api/commands', (request, response) => {
+            const { type, payload } = request.body ?? {};
+
+            if (!ALLOWED_COMMAND_TYPES.includes(type)) {
+                return response.status(400).json({
+                    error: `Unknown command type '${type}'. Allowed: ${ALLOWED_COMMAND_TYPES.join(', ')}`,
+                });
+            }
+            if (this.commandQueue.length >= COMMAND_QUEUE_LIMIT) {
+                return response.status(429).json({
+                    error: `Command queue full (${COMMAND_QUEUE_LIMIT} pending). The game may not be running a command-bridge-aware extension.`,
+                });
+            }
+
+            const command = {
+                id: this.nextCommandId++,
+                type,
+                payload: payload ?? {},
+                status: 'pending',
+                queued_at: new Date().toISOString(),
+            };
+            this.commandQueue.push(command);
+            response.json(command);
+        });
+
+        // Inspect pending queue and recent history
+        this.app.get('/api/commands', (request, response) => {
+            response.json({ pending: this.commandQueue, history: this.commandHistory });
+        });
+
+        // Game-side acknowledgement that delivered commands were executed
+        this.app.post('/api/commands/ack', (request, response) => {
+            const ids = Array.isArray(request.body?.ids) ? request.body.ids : [];
+            let acked = 0;
+            for (const command of this.commandHistory) {
+                if (ids.includes(command.id) && command.status === 'delivered') {
+                    command.status = 'executed';
+                    command.executed_at = new Date().toISOString();
+                    acked++;
+                }
+            }
+            response.json({ acked });
+        });
+
+        // Cancel a pending command
+        this.app.delete('/api/commands/:id', (request, response) => {
+            const id = parseInt(request.params.id);
+            const index = this.commandQueue.findIndex((command) => command.id === id);
+            if (index === -1) {
+                return response.status(404).json({ error: 'No pending command with that id' });
+            }
+            const [command] = this.commandQueue.splice(index, 1);
+            command.status = 'cancelled';
+            command.cancelled_at = new Date().toISOString();
+            this.pushCommandHistory(command);
+            response.json(command);
         });
 
         /**

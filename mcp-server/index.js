@@ -8,9 +8,11 @@
  *  - await_events: a severity-tiered long-poll that diffs live snapshots so
  *    a co-captain loop can wait for something to happen instead of polling
  *  - speak: host text-to-speech so advice reaches the player while flying
+ *  - write path: notify_player / write_logbook enqueue allowlisted commands
+ *    that the in-game bridge executes (see ../game-extension/COMMAND_BRIDGE.md)
  *
- * Game-facing tools are read-only. See README.md for the environment
- * variables (X4_APP_URL, X4_DB_PATH, severity thresholds, TTS override).
+ * See README.md for the environment variables (X4_APP_URL, X4_DB_PATH,
+ * severity thresholds, TTS override).
  *
  * stdout carries the MCP protocol — all logging must go to stderr.
  */
@@ -292,7 +294,7 @@ function snapshotEvents(gameData, latestSavegame) {
 
 const server = new McpServer({
     name: "x4-cocaptain",
-    version: "0.2.0",
+    version: "0.3.0",
 });
 
 server.registerTool(
@@ -544,6 +546,85 @@ server.registerTool(
             }
             await sleep(2000);
         }
+    }
+);
+
+/* ------------------------------------------------------ write path (Phase 3) */
+
+async function enqueueCommand(type, payload) {
+    const result = await fetchJson("/api/commands", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type, payload }),
+    });
+    if (result.error) return errorResult(result.error);
+    if (!result.ok) return errorResult(result.data?.error ?? `Enqueue failed (HTTP ${result.status})`);
+    return jsonResult({
+        ...result.data,
+        note: "Delivered to the game on its next data POST (~2s). 'executed' status requires " +
+            "a command-bridge-aware extension (see game-extension/COMMAND_BRIDGE.md); with the " +
+            "stock extension commands reach 'delivered' but are ignored in-game.",
+    });
+}
+
+server.registerTool(
+    "notify_player",
+    {
+        title: "Show in-game notification",
+        description: "Queue a short notification to display inside X4 via the command bridge. " +
+            "Use for co-captain callouts that should reach the player in-game rather than in chat. " +
+            "Check get_command_queue if unsure the bridge is installed.",
+        inputSchema: {
+            text: z.string().min(1).max(500).describe("Notification text (keep it short)"),
+        },
+    },
+    async ({ text }) => enqueueCommand("notify", { text })
+);
+
+server.registerTool(
+    "write_logbook",
+    {
+        title: "Write player logbook entry",
+        description: "Queue a logbook entry to be written inside X4 via the command bridge — " +
+            "a durable co-captain note the player can read later in the in-game logbook.",
+        inputSchema: {
+            title: z.string().min(1).max(100).describe("Entry title"),
+            text: z.string().min(1).max(1000).describe("Entry body"),
+        },
+    },
+    async ({ title, text }) => enqueueCommand("logbook", { title, text })
+);
+
+server.registerTool(
+    "get_command_queue",
+    {
+        title: "Inspect command queue",
+        description: "Pending commands awaiting delivery to the game, and recent history with statuses " +
+            "(pending → delivered → executed once the in-game bridge acknowledges; cancelled). " +
+            "Commands stuck at 'delivered' mean the game extension isn't executing the bridge protocol.",
+        inputSchema: {},
+    },
+    async () => {
+        const result = await fetchJson("/api/commands");
+        if (result.error) return errorResult(result.error);
+        return jsonResult(result.data);
+    }
+);
+
+server.registerTool(
+    "cancel_command",
+    {
+        title: "Cancel pending command",
+        description: "Remove a not-yet-delivered command from the queue by id.",
+        inputSchema: {
+            id: z.number().int().describe("Command id from notify_player/write_logbook/get_command_queue"),
+        },
+    },
+    async ({ id }) => {
+        const result = await fetchJson(`/api/commands/${id}`, { method: "DELETE" });
+        if (result.error) return errorResult(result.error);
+        if (!result.ok) return errorResult(result.data?.error ?? `Cancel failed (HTTP ${result.status})`);
+        return jsonResult(result.data);
     }
 );
 

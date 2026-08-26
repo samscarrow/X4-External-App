@@ -8,9 +8,13 @@ co-captain for X4: Foundations by reading the data streams X4-External-App alrea
 | Live telemetry (`POST /api/data` from the in-game Lua extension) | seconds | `get_live_state`, `get_logbook`, `await_events` |
 | Savegame SQLite DB (`data/x4_savegame.db`, filled by the watcher) | minutes (autosave cadence) | `get_fleet`, `get_stations`, `get_blueprints`, `list_savegames`, `get_db_schema`, `query_savegame_db` |
 | Host machine text-to-speech | — | `speak` |
+| Command queue → in-game bridge (`../game-extension/COMMAND_BRIDGE.md`) | next data POST (~2s) | `notify_player`, `write_logbook`, `get_command_queue`, `cancel_command` |
 
-All game-facing tools are **read-only** — nothing changes game state or writes to the database.
-`speak` is the only tool with a side effect, and it only makes noise.
+Reading tools never change game state. The write path goes through a server-side command
+queue with an allowlist of command types (`notify`, `logbook`); commands only take effect
+in-game once the command bridge is wired into the Lua extension (see
+`../game-extension/COMMAND_BRIDGE.md`) — until then they park at `delivered` status,
+visible in `get_command_queue`.
 
 ## Prerequisites
 
@@ -109,6 +113,10 @@ In Claude Code, the `/loop` command is a convenient way to keep that running.
 - `get_logbook [limit] [search]` — recent logbook entries, filterable
 - `await_events [timeout_seconds] [min_severity]` — long-poll for game events (see above)
 - `speak <text> [rate] [voice]` — read advice aloud via host TTS
+- `notify_player <text>` — queue an in-game notification (via command bridge)
+- `write_logbook <title> <text>` — queue an in-game logbook entry (via command bridge)
+- `get_command_queue` — pending/delivered/executed command statuses
+- `cancel_command <id>` — cancel a not-yet-delivered command
 - `list_savegames` — parsed savegames with metadata
 - `get_fleet [savegame_id]` — ships from a savegame (defaults to latest)
 - `get_stations [savegame_id]` — stations from a savegame
@@ -120,8 +128,9 @@ In Claude Code, the `/loop` command is a convenient way to keep that running.
 
 - ~~**Phase 1**: read-only tools + `await_events` long-poll~~ ✓
 - ~~**Phase 2**: event severity tiers, id-based logbook diffing, text-to-speech output~~ ✓
-- **Phase 3**: write path — command queue piggybacked on the Lua extension's POST cycle
-  (in-game notifications, then structured commands)
+- **Phase 3**: write path — command queue piggybacked on the Lua extension's POST cycle ✓
+  (server + MCP tools done; in-game Lua/MD wiring documented in
+  `../game-extension/COMMAND_BRIDGE.md`, to be validated on the gaming PC)
 - **Phase 4**: fleet orders via SirNukes Mod Support APIs / named pipes; encyclopedia tools
   backed by the static X4 database
 
