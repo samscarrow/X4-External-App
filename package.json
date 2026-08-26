@@ -1,7 +1,7 @@
 {
   "author": "Mycu",
   "name": "x4_external_app",
-  "version": "3.3.0",
+  "version": "3.6.1",
   "bin": "server.js",
   "pkg": {
     "assets": [
@@ -38,6 +38,7 @@
     "lodash": "^4.17.21",
     "mitt": "^3.0.0",
     "node-cron": "^3.0.3",
+    "pkg": "^5.8.1",
     "portfinder": "^1.0.28",
     "sax": "^1.4.1",
     "vue": "^3.2.25",

@@ -9,7 +9,13 @@
       "disabled": "disabled",
       "enabled": "enabled",
       "start_typing": "Start typing...",
-      "credits": "Cr"
+      "credits": "Cr",
+      "time": {
+        "day_short": "d",
+        "hour_short": "h",
+        "minute_short": "m",
+        "ago": "ago"
+      }
     },
     "header": {
       "settings": "Settings",
@@ -212,6 +218,44 @@
         "show_more": "Show more",
         "remaining": "remaining",
         "last_parsed": "Last parsed"
+      },
+      "agents": {
+        "title": "Agents",
+        "no_agents": "No agents available",
+        "prestige": "Prestige",
+        "success_chance": "Success chance",
+        "risk_to_agent": "Risk to agent",
+        "rewards": "Rewards",
+        "negotiation": "Negotiation",
+        "espionage": "Espionage",
+        "agent_injured": "Agent injured",
+        "no_mission_assigned": "No mission assigned",
+        "settings": {
+          "title": "Agents settings",
+          "show_agent_image": "Show agent image",
+          "show_agent_details": "Show agent details",
+          "show_mission_details": "Show mission details"
+        }
+      }
+      ,
+      "inventory": {
+        "title": "Inventory",
+        "no_data": "No inventory data received yet.",
+        "filter_placeholder": "Filter name...",
+        "sort_name": "Sort by name",
+        "sort_amount": "Sort by amount",
+        "sort_price": "Sort by price",
+        "sort_value": "Sort by value",
+        "unknown": "Unknown",
+        "illegal_tooltip": "This ware is illegal in the current sector",
+        "settings": {
+          "title": "Inventory Settings",
+          "show_categories": "Show categories",
+          "categories": "Categories",
+          "display_mode": "Display mode",
+          "display_price": "Price",
+          "display_value": "Value"
+        }
       }
     }
   }

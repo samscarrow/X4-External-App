@@ -13,6 +13,7 @@ const port = process.env.APP_PORT || 8080;
 
 const chalk = require('chalk');
 const { version } = require("./package.json");
+const { normalizeObjectRecursively } = require('./utils/textProcessor');
 
 const isPackaged = !!process.pkg;
 const runtimeDir = isPackaged ? path.dirname(process.execPath) : __dirname;
@@ -71,6 +72,27 @@ class Server {
         } catch (error) {
             console.error(chalk.red('Failed to initialize savegame services:'), error);
         }
+    }
+
+    /**
+     * Merge new entries into existing ones, deduplicating by key and sorting by time (newest first)
+     */
+    mergeEntries (existing, incoming, key) {
+        if (!existing || !Array.isArray(existing)) {
+            return incoming;
+        }
+
+        const compositeKey = (entry) => `${entry[key]}_${entry.time}`;
+
+        const map = new Map();
+        for (const entry of existing) {
+            map.set(compositeKey(entry), entry);
+        }
+        for (const entry of incoming) {
+            map.set(compositeKey(entry), entry);
+        }
+
+        return Array.from(map.values()).sort((a, b) => (b.time || 0) - (a.time || 0));
     }
 
     /**
@@ -190,7 +212,23 @@ class Server {
          * Handle incoming data from X4
          */
         this.app.post('/api/data', (request, response) => {
-            this.dataObject = request.body;
+            // Normalize output (handle line breaks, color codes, etc.)
+            const newData = normalizeObjectRecursively(request.body);
+
+            // Incrementally accumulate list-type data instead of replacing
+            if (newData.transactionLog && Array.isArray(newData.transactionLog)) {
+                newData.transactionLog = this.mergeEntries(
+                    this.dataObject?.transactionLog, newData.transactionLog, 'entryid'
+                );
+            }
+            if (newData.logbook && Array.isArray(newData.logbook)) {
+                newData.logbook = this.mergeEntries(
+                    this.dataObject?.logbook, newData.logbook, 'id'
+                );
+            }
+
+            // Merge new data with existing
+            this.dataObject = { ...this.dataObject, ...newData };
 
             if (!isPackaged) {
                 try {

@@ -2,13 +2,13 @@
   <div class="list-group-item border-start-0 border-end-0 border-top-0 px-lg-0 py-3">
     <div class="d-flex" :class="[{ featured: isFeatured }, colorClass]">
       <div class="ms-12 w-100">
-        <div class="d-flex justify-content-between">
+        <div class="d-flex justify-content-between align-items-center">
           <div>
-            <h5 :class="entryTitleClass" class="text-sm" v-html="parsedTitle"></h5>
-            <div class="text-sm">{{ entry.eventtypename }}</div>
+            <h5 :class="entryTitleClass" class="text-sm" v-html="parsedTitle || entry.eventtypename"></h5>
+            <div class="text-sm" v-if="parsedTitle">{{ entry.eventtypename }}</div>
           </div>
           <div class="flex-shrink-0 text-end right-block">
-            <small class="text-nowrap">{{ entry.passedtime }}</small>
+            <small class="text-nowrap">{{ formattedPassedTime }}</small>
             <div class="text-muted text-sm" v-if="entry.money">
               <span :class="[{'red': entry.money < 0}, {'green': entry.money > 0}]">{{ money }}</span>
             </div>
@@ -20,36 +20,14 @@
 </template>
 
 <script>
+import passedTimeMixin from '../../mixins/passedTimeMixin.js'
+
 export default {
+  mixins: [passedTimeMixin],
   props: [
     'name',
     'entry',
   ],
-  methods: {
-    /**
-     * @return {boolean}
-     */
-    isFeatured() {
-      return this.entry.rules && this.entry.rules.type === 'featured'
-    },
-    /**
-     * @return {string}
-     */
-    color(source) {
-      const color = source.match(/\#\w{8}\#/g)
-      if (Array.isArray(color)) {
-        return `#${color[0].slice(3, -1)}`
-      }
-      return ''
-    },
-    /**
-     * @return {string}
-     */
-    replaced(color) {
-      return color ? `<span style="color: ${color}">` : ''
-    }
-  },
-
   computed: {
     /**
      * @return {string|null}
@@ -86,8 +64,29 @@ export default {
       return this.entry.money.toLocaleString() + ' ' + this.$t('app.common.credits');
     }
   },
-  data() {
-    return {}
+  methods: {
+    /**
+     * @return {boolean}
+     */
+    isFeatured() {
+      return this.entry.rules && this.entry.rules.type === 'featured'
+    },
+    /**
+     * @return {string}
+     */
+    color(source) {
+      const color = source.match(/\#\w{8}\#/g)
+      if (Array.isArray(color)) {
+        return `#${color[0].slice(3, -1)}`
+      }
+      return ''
+    },
+    /**
+     * @return {string}
+     */
+    replaced(color) {
+      return color ? `<span style="color: ${color}">` : ''
+    }
   },
 }
 </script>

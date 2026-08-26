@@ -32,4 +32,10 @@ export default {
     savegameInfo: {
         widgetName: 'app.widgets.savegame_info.title',
     },
+    agents: {
+        widgetName: 'app.widgets.agents.title',
+    },
+    inventory: {
+        widgetName: 'app.widgets.inventory.title',
+    },
 }
