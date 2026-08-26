@@ -709,6 +709,29 @@ server.registerTool(
 );
 
 server.registerTool(
+    "set_guidance",
+    {
+        title: "Set player HUD guidance",
+        description: "Point the player's in-game guidance (the same marker the map's 'set guidance' uses) " +
+            "at a sector, or a position within one, via the command bridge. Advise-by-default: only call " +
+            "this when the player explicitly asks to be guided somewhere. Find sector identifiers via " +
+            "query_savegame_db (sectors table) or use the exact in-game sector name. Guidance to a sector " +
+            "without coordinates auto-ends on arrival.",
+        inputSchema: {
+            sector: z.string().optional()
+                .describe("Sector macro id (e.g. 'cluster_14_sector001_macro') or exact known sector name " +
+                    "(e.g. 'Argon Prime', case-sensitive). Omitted: the player's current sector"),
+            x: z.number().optional().describe("East-west offset from sector centre, km"),
+            y: z.number().optional().describe("Vertical offset from sector centre, km"),
+            z: z.number().optional().describe("North-south offset from sector centre, km"),
+            clear: z.boolean().optional().describe("true: clear the active co-captain guidance instead"),
+        },
+    },
+    async ({ sector, x, y, z, clear }) => enqueueCommand("set_guidance",
+        clear ? { clear: true } : { sector, x, y, z })
+);
+
+server.registerTool(
     "get_command_queue",
     {
         title: "Inspect command queue",

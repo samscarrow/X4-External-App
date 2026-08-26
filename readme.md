@@ -347,10 +347,12 @@ X4-External-App/
 - Station profitability reports
 
 ### 🤖 Phase 5: AI Copilot
-- LLM integration (Claude API, OpenAI)
+- ✅ MCP server for LLM co-captain (see `mcp-server/`)
+- ✅ Command bridge into the game: notifications, logbook entries, and HUD guidance
+  (`set_guidance`) — see `game-extension/COMMAND_BRIDGE.md`
 - Natural language queries about game state
 - AI-powered recommendations
-- Automated insights and alerts
+- Further fleet orders, one allowlisted command at a time (advise-by-default)
 
 ## Troubleshooting
 

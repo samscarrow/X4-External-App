@@ -25,5 +25,55 @@
                 <write_to_logbook category="general" title="event.param3.{'title'}" text="event.param3.{'text'}" />
             </actions>
         </cue>
+        <!--
+          set_guidance rides the vanilla guidance system (md/guidance.xml) - the
+          same machinery the map's right-click "set guidance" uses, including
+          mission display, path plotting, arrival detection, and cleanup.
+          Payload: { clear = true } to end guidance, or optional
+          { sector = <macro id or exact known sector name>, x/y/z = km offset }.
+          No sector -> the player's current sector; no offset -> sector-entry
+          guidance that auto-ends on arrival (vanilla behaviour).
+        -->
+        <cue name="CoCaptain_OnSetGuidance" instantiate="true">
+            <conditions>
+                <event_ui_triggered screen="'CoCaptainBridge'" control="'set_guidance'" />
+            </conditions>
+            <actions>
+                <do_if value="@event.param3.{'clear'}">
+                    <signal_cue_instantly cue="md.Guidance.EndGuidance" param="true" />
+                    <show_notification text="'Co-captain: guidance cleared'" />
+                </do_if>
+                <do_else>
+                    <do_if value="event.param3.{'sector'}?">
+                        <set_value name="$SectorArg" exact="event.param3.{'sector'}" />
+                        <set_value name="$WantedMacro" exact="if macro.{$SectorArg}? then macro.{$SectorArg} else null" />
+                        <set_value name="$Sector" exact="null" />
+                        <find_sector name="$AllSectors" space="player.galaxy" multiple="true" />
+                        <do_all exact="$AllSectors.count" counter="$i">
+                            <do_if value="($WantedMacro and $AllSectors.{$i}.macro == $WantedMacro) or $AllSectors.{$i}.knownname == $SectorArg">
+                                <set_value name="$Sector" exact="$AllSectors.{$i}" />
+                            </do_if>
+                        </do_all>
+                    </do_if>
+                    <do_else>
+                        <set_value name="$Sector" exact="player.sector" />
+                    </do_else>
+                    <do_if value="$Sector">
+                        <set_value name="$Offset" exact="null" />
+                        <do_if value="event.param3.{'x'}? or event.param3.{'y'}? or event.param3.{'z'}?">
+                            <set_value name="$X" exact="if event.param3.{'x'}? then event.param3.{'x'} else 0" />
+                            <set_value name="$Y" exact="if event.param3.{'y'}? then event.param3.{'y'} else 0" />
+                            <set_value name="$Z" exact="if event.param3.{'z'}? then event.param3.{'z'} else 0" />
+                            <set_value name="$Offset" exact="position.[$X * 1km, $Y * 1km, $Z * 1km]" />
+                        </do_if>
+                        <signal_cue_instantly cue="md.Guidance.NewTarget" param="[$Sector, $Offset]" />
+                        <show_notification text="'Co-captain: guidance set to ' + $Sector.knownname" />
+                    </do_if>
+                    <do_else>
+                        <show_notification text="'Co-captain: unknown sector ' + $SectorArg" />
+                    </do_else>
+                </do_else>
+            </actions>
+        </cue>
     </cues>
 </mdscript>

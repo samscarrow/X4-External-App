@@ -109,6 +109,22 @@ function external.executeCommand (command)
         return true
     end
 
+    if command.type == "set_guidance" then
+        local out = {}
+        if payload.clear == true then
+            out.clear = true
+        else
+            if type(payload.sector) == "string" and payload.sector ~= "" then
+                out.sector = payload.sector
+            end
+            if type(payload.x) == "number" then out.x = payload.x end
+            if type(payload.y) == "number" then out.y = payload.y end
+            if type(payload.z) == "number" then out.z = payload.z end
+        end
+        AddUITriggeredEvent("CoCaptainBridge", "set_guidance", out)
+        return true
+    end
+
     DebugError("Co-captain bridge: unknown command type '" .. tostring(command.type) .. "' (id " .. tostring(command.id) .. ")")
     return false
 end

@@ -32,7 +32,7 @@ app.use(bodyParser.json({ limit: '50mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
 
 // Command types the co-captain may enqueue for the in-game bridge
-const ALLOWED_COMMAND_TYPES = ['notify', 'logbook'];
+const ALLOWED_COMMAND_TYPES = ['notify', 'logbook', 'set_guidance'];
 const COMMAND_QUEUE_LIMIT = 20;
 const COMMAND_HISTORY_LIMIT = 100;
 
