@@ -53,5 +53,11 @@
     "sass": "^1.87.0",
     "vite": "^7.1.11",
     "vite-plugin-pwa": "^1.1.0"
+  },
+  "allowScripts": {
+    "iconv@2.3.5": true,
+    "node-expat@2.4.1": true,
+    "esbuild@0.25.11": true,
+    "better-sqlite3@11.10.0": true
   }
 }
