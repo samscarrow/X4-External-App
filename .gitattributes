@@ -1,0 +1,24 @@
+# Normalize all text files to LF in the repository.
+# This repo is developed across Windows and Linux; upstream
+# (mycumycu/X4-External-App) is LF, and mixed endings previously turned
+# every merge into whole-file conflicts.
+* text=auto eol=lf
+
+# Windows-native scripts keep CRLF on checkout
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary assets — never touch line endings
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+*.mp3 binary
+*.db binary
