@@ -9,6 +9,7 @@ co-captain for X4: Foundations by reading the data streams X4-External-App alrea
 | Savegame SQLite DB (`data/x4_savegame.db`, filled by the watcher) | minutes (autosave cadence) | `get_fleet`, `get_stations`, `get_blueprints`, `list_savegames`, `get_db_schema`, `query_savegame_db` |
 | Persistent events journal (`events` table, written by the app server on every game POST) | seconds, survives restarts | `await_events`, `search_events`, `get_activity_summary`, `server_status` |
 | Tailored aggregations over live data | seconds | `get_trading_summary`, `situation_report` |
+| Static game encyclopedia (`data/encyclopedia.json`, extracted from the samscarrow/x4 repo) | offline, no game needed | `encyclopedia_search`, `encyclopedia_entry`, `production_chain` |
 | Host machine text-to-speech | — | `speak` |
 | Command queue → in-game bridge (`../game-extension/COMMAND_BRIDGE.md`) | next data POST (~2s) | `notify_player`, `write_logbook`, `get_command_queue`, `cancel_command` |
 
@@ -130,6 +131,9 @@ In Claude Code, the `/loop` command is a convenient way to keep that running.
 - `get_activity_summary [hours] [type] [q] [top]` — windowed digest of the journal: counts, credit flow, urgent incidents, mission changes
 - `situation_report` — one compact briefing (player, mission, fleet health, notable events, pending commands)
 - `server_status` — bridge health: uptime, game online, journal size, queue depth
+- `encyclopedia_search <category> [query] [filters...]` — search ships/wares/modules/equipment/factions (size, type, purpose, race, group, class filters)
+- `encyclopedia_entry <category> <id-or-name>` — full stats: ship loadout slots, ware recipes + used_in, module production, faction lore
+- `production_chain <ware> [amount] [method]` — recipe tree down to raw resources with scaled input totals
 - `speak <text> [rate] [voice]` — read advice aloud via host TTS
 - `notify_player <text>` — queue an in-game notification (via command bridge)
 - `write_logbook <title> <text>` — queue an in-game logbook entry (via command bridge)
@@ -151,8 +155,10 @@ In Claude Code, the `/loop` command is a convenient way to keep that running.
   `../game-extension/COMMAND_BRIDGE.md`, to be validated on the gaming PC)
 - ~~**Phase 4a**: persistent events journal + `search_events`, tailored trading/activity
   summaries, `situation_report`, `server_status`, inventory/agents live sections, unit tests~~ ✓
-- **Phase 4b**: fleet orders via the command bridge / SirNukes APIs; encyclopedia tools
-  backed by the static X4 database
+- ~~**Phase 4b (encyclopedia)**: offline game database tools backed by the samscarrow/x4
+  repo's static data~~ ✓ — regenerate the bundle with
+  `node scripts/build-encyclopedia.mjs /path/to/x4` when that repo's data updates
+- **Phase 5**: fleet orders via the command bridge / SirNukes APIs
 
 ## Troubleshooting
 

@@ -1,6 +1,6 @@
 {
   "name": "x4-cocaptain-mcp",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Standalone stdio MCP server exposing X4-External-App live game data, the savegame SQLite database, a severity-tiered event long-poll, text-to-speech, and the in-game command queue \u2014 the X4 co-captain bridge.",
   "type": "module",
   "main": "index.js",

@@ -7,6 +7,9 @@
  *  - fleet/station/blueprint data via the savegame SQLite database
  *  - a persistent events journal (diffed and written by the app server),
  *    tailed by await_events and queryable via search_events / summaries
+ *  - a static game encyclopedia (ships, wares, modules, equipment, factions)
+ *    extracted from the samscarrow/x4 repo - offline lookups and production
+ *    chains via lib/encyclopedia.mjs and data/encyclopedia.json
  *  - speak: host text-to-speech so advice reaches the player while flying
  *  - write path: notify_player / write_logbook enqueue allowlisted commands
  *    that the in-game bridge executes (see ../game-extension/COMMAND_BRIDGE.md)
@@ -28,6 +31,13 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { summarizeTransactions, summarizeEvents } from "./lib/summaries.mjs";
 import { assertReadOnlySql } from "./lib/sqlGuard.mjs";
+import {
+    CATEGORIES,
+    loadEncyclopedia,
+    searchEncyclopedia,
+    getEncyclopediaEntry,
+    productionChain,
+} from "./lib/encyclopedia.mjs";
 
 const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -164,7 +174,7 @@ async function fetchEvents(params) {
 
 const server = new McpServer({
     name: "x4-cocaptain",
-    version: "0.4.0",
+    version: "0.5.0",
 });
 
 server.registerTool(
@@ -575,6 +585,80 @@ server.registerTool(
 
         return jsonResult(report);
     }
+);
+
+/* ------------------------------------------------------------- encyclopedia */
+
+function withEncyclopedia(fn) {
+    return async (args) => {
+        try {
+            const bundle = loadEncyclopedia();
+            return fn(bundle, args);
+        } catch (error) {
+            return errorResult(error.message);
+        }
+    };
+}
+
+server.registerTool(
+    "encyclopedia_search",
+    {
+        title: "Search game encyclopedia",
+        description: "Search the static X4 game database (offline, no game needed): ships, wares, station " +
+            "modules, equipment, factions, races, ware groups. Substring query on name/id plus exact " +
+            "filters. Returns compact rows; use encyclopedia_entry for full stats.",
+        inputSchema: {
+            category: z.enum(CATEGORIES),
+            query: z.string().optional().describe("Substring match on name or id"),
+            size: z.string().optional().describe("e.g. 'Large', 'Medium'"),
+            type: z.string().optional().describe("Ship type ('Destroyer'), module type ('Production'), equipment type ('Engines')"),
+            purpose: z.string().optional().describe("Ship purpose: Fight, Trade, Mine, Build, Auxiliary, Salvage"),
+            race: z.string().optional().describe("Maker race id, e.g. 'argon', 'teladi'"),
+            group: z.string().optional().describe("Ware group id, e.g. 'hightech'"),
+            class: z.string().optional().describe("Equipment class, e.g. 'Turret', 'Shield Generator'"),
+            limit: z.number().int().min(1).max(50).default(15),
+        },
+    },
+    withEncyclopedia((bundle, args) => jsonResult(searchEncyclopedia(bundle, args.category, args)))
+);
+
+server.registerTool(
+    "encyclopedia_entry",
+    {
+        title: "Get encyclopedia entry",
+        description: "Full record for one entity by id or name: ship hulls/shields/engines, ware prices and " +
+            "production recipes (plus what it's used in), module workforce and production, equipment stats, " +
+            "faction lore.",
+        inputSchema: {
+            category: z.enum(CATEGORIES),
+            id: z.string().describe("Entity id (e.g. 'ship_arg_l_destroyer_01_a', 'hullparts') or name ('Behemoth Vanguard')"),
+        },
+    },
+    withEncyclopedia((bundle, { category, id }) => {
+        const entry = getEncyclopediaEntry(bundle, category, id);
+        if (!entry) return errorResult(`No ${category} entry matching '${id}'. Try encyclopedia_search first.`);
+        return jsonResult(entry);
+    })
+);
+
+server.registerTool(
+    "production_chain",
+    {
+        title: "Compute production chain",
+        description: "What it takes to produce a ware: the full recipe tree expanded down to raw resources, " +
+            "plus flattened input totals. Useful for station planning ('what feeds a Hull Parts factory?').",
+        inputSchema: {
+            ware: z.string().describe("Ware id or name, e.g. 'hullparts' or 'Hull Parts'"),
+            amount: z.number().min(1).default(1).describe("Units of the target ware"),
+            method: z.string().default("default").describe("Preferred production method: default, teladi, argon, paranid, recycling"),
+            max_depth: z.number().int().min(1).max(10).default(10),
+        },
+    },
+    withEncyclopedia((bundle, { ware, amount, method, max_depth }) => {
+        const chain = productionChain(bundle, ware, { amount, method, max_depth });
+        if (!chain) return errorResult(`No ware matching '${ware}'. Try encyclopedia_search with category 'wares'.`);
+        return jsonResult(chain);
+    })
 );
 
 /* ------------------------------------------------------ write path (Phase 3) */
