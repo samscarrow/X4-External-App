@@ -835,6 +835,64 @@ server.registerTool(
 );
 
 server.registerTool(
+    "get_ship_loadout",
+    {
+        title: "Get a ship's installed armament",
+        description: "On-demand armament report for a player-owned ship: installed weapons and turrets " +
+            "(by equipment name) plus aggregate DPS. The game gathers it via the bridge and it returns " +
+            "on the next telemetry cycle (this tool waits up to ~15s). Use before advising on weapons " +
+            "hold, escort choice, or a rekit_ship refit.",
+        inputSchema: {
+            ship: z.string().optional()
+                .describe("Ship ID code (e.g. 'JHL-824') or exact known ship name. Omitted: the ship the " +
+                    "player is currently aboard"),
+        },
+    },
+    async ({ ship }) => {
+        const before = await fetchJson("/api/data");
+        const prevTime = before?.data?.ship_loadout?.game_time;
+        const queued = await fetchJson("/api/commands", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ type: "get_ship_loadout", payload: { ship } }),
+        });
+        if (queued.error) return errorResult(queued.error);
+        if (!queued.ok) return errorResult(queued.data?.error ?? `Enqueue failed (HTTP ${queued.status})`);
+        for (let i = 0; i < 10; i++) {
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+            const live = await fetchJson("/api/data");
+            const report = live?.data?.ship_loadout;
+            if (report && report.game_time !== prevTime) {
+                return jsonResult({ loadout: report });
+            }
+        }
+        return errorResult("No loadout report arrived within 15s - is the game running (and unpaused) " +
+            "with the current bridge version? The report may still land in /api/data shortly.");
+    }
+);
+
+server.registerTool(
+    "rekit_ship",
+    {
+        title: "Refit a ship at a wharf with a different loadout",
+        description: "The legitimate refit path: creates a ship-modification build at an equip-capable " +
+            "station and issues the vanilla Equip order - the ship flies there, docks, and is refitted " +
+            "by the station. `loadout` is a loadout ID valid for the ship's hull: a player-saved loadout " +
+            "id from the wharf UI, or a predefined one. Strictly on-request: NEVER call unless the " +
+            "player explicitly asked for this refit. Success signal is the in-game ticker + logbook " +
+            "entry; a 'refit build failed' ticker means the loadout id was not valid for that hull.",
+        inputSchema: {
+            ship: z.string().min(1).describe("Ship ID code (e.g. 'JHL-824') or exact known ship name"),
+            loadout: z.string().min(1)
+                .describe("Loadout ID valid for the ship's hull (player-saved loadout id or predefined)"),
+            station: z.string().min(1)
+                .describe("Exact known name of an equip-capable station (wharf/shipyard/equipment dock)"),
+        },
+    },
+    async ({ ship, loadout, station }) => enqueueCommand("rekit_ship", { ship, loadout, station })
+);
+
+server.registerTool(
     "set_weapons_hold",
     {
         title: "Weapons hold / weapons free on a player ship",

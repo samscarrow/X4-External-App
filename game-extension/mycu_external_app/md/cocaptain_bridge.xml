@@ -328,6 +328,125 @@
         </cue>
 
         <!--
+          get_ship_loadout: on-demand armament report. Enumerates the ship's
+          installed weapons and turrets (find_object_component, the vanilla
+          idiom) plus aggregate DPS, and writes the report to the blackboard
+          var $cocaptain_loadout; ui/ea.lua forwards it as `ship_loadout` on
+          the next telemetry cycle. Ship named by idcode/exact name, or the
+          ship the player is aboard when omitted.
+        -->
+        <cue name="CoCaptain_OnGetShipLoadout" instantiate="true">
+            <conditions>
+                <event_ui_triggered screen="'CoCaptainBridge'" control="'get_ship_loadout'" />
+            </conditions>
+            <actions>
+                <do_if value="event.param3.{'$ship'}?">
+                    <set_value name="$ShipArg" exact="event.param3.{'$ship'}" />
+                    <set_value name="$Ship" exact="null" />
+                    <find_ship name="$AllShips" space="player.galaxy" owner="faction.player" multiple="true" />
+                    <do_all exact="$AllShips.count" counter="$i">
+                        <do_if value="not $Ship and ($AllShips.{$i}.idcode == $ShipArg or $AllShips.{$i}.knownname == $ShipArg)">
+                            <set_value name="$Ship" exact="$AllShips.{$i}" />
+                        </do_if>
+                    </do_all>
+                    <do_if value="not $Ship">
+                        <show_notification text="'Co-captain: no owned ship matches ' + $ShipArg" />
+                    </do_if>
+                </do_if>
+                <do_else>
+                    <set_value name="$Ship" exact="player.occupiedship" />
+                    <do_if value="not $Ship.exists or $Ship.isclass.spacesuit">
+                        <set_value name="$Ship" exact="null" />
+                        <show_notification text="'Co-captain: you are not aboard a ship'" />
+                    </do_if>
+                </do_else>
+                <do_if value="$Ship">
+                    <find_object_component name="$Weapons" object="$Ship" class="class.weapon" multiple="true" checkoperational="false" />
+                    <find_object_component name="$Turrets" object="$Ship" class="class.turret" multiple="true" checkoperational="false" />
+                    <set_value name="$WeaponList" exact="[]" />
+                    <do_all exact="@$Weapons.count" counter="$i">
+                        <append_to_list name="$WeaponList" exact="if @$Weapons.{$i}.macro.name then $Weapons.{$i}.macro.name else 'unknown'" />
+                    </do_all>
+                    <set_value name="$TurretList" exact="[]" />
+                    <do_all exact="@$Turrets.count" counter="$i">
+                        <append_to_list name="$TurretList" exact="if @$Turrets.{$i}.macro.name then $Turrets.{$i}.macro.name else 'unknown'" />
+                    </do_all>
+                    <set_value name="player.entity.$cocaptain_loadout" exact="table[
+                        $idcode = $Ship.idcode,
+                        $name = $Ship.knownname,
+                        $macro = if @$Ship.macro.name then $Ship.macro.name else '',
+                        $weapons = $WeaponList,
+                        $turrets = $TurretList,
+                        $dps_all = if @$Ship.dps.all then ($Ship.dps.all)i else 0,
+                        $dps_turrets = if @$Ship.dps.secondary then ($Ship.dps.secondary)i else 0,
+                        $game_time = (player.age / 1s)i
+                    ]" />
+                    <show_notification text="'Co-captain: loadout report ready for ' + $Ship.knownname + ' ' + $Ship.idcode" />
+                </do_if>
+            </actions>
+        </cue>
+
+        <!--
+          rekit_ship: the legitimate refit path. Creates a ship-modification
+          build task at an equip-capable station (add_build_to_modify_ship
+          with a loadout ID - predefined or saved by the player in the wharf
+          UI) and issues the vanilla Equip order, so the ship flies there,
+          docks, and is refitted by the station. Requires ship idcode/name,
+          loadout id, and exact station name.
+        -->
+        <cue name="CoCaptain_OnRekitShip" instantiate="true">
+            <conditions>
+                <event_ui_triggered screen="'CoCaptainBridge'" control="'rekit_ship'" />
+            </conditions>
+            <actions>
+                <set_value name="$ShipArg" exact="event.param3.{'$ship'}" />
+                <set_value name="$Ship" exact="null" />
+                <find_ship name="$AllShips" space="player.galaxy" owner="faction.player" multiple="true" />
+                <do_all exact="$AllShips.count" counter="$i">
+                    <do_if value="not $Ship and ($AllShips.{$i}.idcode == $ShipArg or $AllShips.{$i}.knownname == $ShipArg)">
+                        <set_value name="$Ship" exact="$AllShips.{$i}" />
+                    </do_if>
+                </do_all>
+                <do_if value="not $Ship">
+                    <show_notification text="'Co-captain: no owned ship matches ' + $ShipArg" />
+                </do_if>
+                <do_elseif value="$Ship.pilot == player.entity">
+                    <show_notification text="'Co-captain: you have the helm of ' + $Ship.knownname + ' - dock at the wharf yourself'" />
+                </do_elseif>
+                <do_elseif value="not @$Ship.assignedpilot">
+                    <show_notification text="'Co-captain: ' + $Ship.knownname + ' has no captain to take the refit order'" />
+                </do_elseif>
+                <do_else>
+                    <set_value name="$StationArg" exact="event.param3.{'$station'}" />
+                    <set_value name="$Station" exact="null" />
+                    <find_station name="$AllStations" space="player.galaxy" multiple="true" />
+                    <do_all exact="$AllStations.count" counter="$i">
+                        <do_if value="not $Station and $AllStations.{$i}.knownname == $StationArg and $AllStations.{$i}.canequipships">
+                            <set_value name="$Station" exact="$AllStations.{$i}" />
+                        </do_if>
+                    </do_all>
+                    <do_if value="$Station">
+                        <set_value name="$LoadoutId" exact="event.param3.{'$loadout'}" />
+                        <add_build_to_modify_ship object="$Station" buildobject="$Ship" loadout="$LoadoutId" result="$Build" />
+                        <do_if value="$Build">
+                            <create_order object="$Ship" id="'Equip'" immediate="true">
+                                <param name="build" value="$Build" />
+                            </create_order>
+                            <show_notification text="'Co-captain: ' + $Ship.knownname + ' ' + $Ship.idcode + ' ordered to refit at ' + $Station.knownname + ' with loadout ' + $LoadoutId" />
+                            <write_to_logbook category="general" title="'Co-captain order'" text="'Refit: ' + $Ship.knownname + ' ' + $Ship.idcode + ' to loadout ' + $LoadoutId + ' at ' + $Station.knownname" />
+                        </do_if>
+                        <do_else>
+                            <show_notification text="'Co-captain: refit build failed - is loadout ' + $LoadoutId + ' valid for ' + $Ship.knownname + '?'" />
+                        </do_else>
+                    </do_if>
+                    <do_else>
+                        <show_notification text="'Co-captain: no equip-capable station named ' + $StationArg" />
+                    </do_else>
+                </do_else>
+            </actions>
+        </cue>
+
+        <!--
           Fleet telemetry: every 30s, sweep all player-owned ships into the
           player-entity blackboard var $cocaptain_fleet. ui/ea.lua reads it
           back via GetNPCBlackboard (keys arrive in Lua with the $ stripped)

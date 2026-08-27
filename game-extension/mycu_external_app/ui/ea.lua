@@ -139,6 +139,30 @@ function external.executeCommand (command)
         return true
     end
 
+    if command.type == "get_ship_loadout" then
+        local out = {}
+        if type(payload.ship) == "string" and payload.ship ~= "" then
+            out.ship = payload.ship
+        end
+        AddUITriggeredEvent("CoCaptainBridge", "get_ship_loadout", out)
+        return true
+    end
+
+    if command.type == "rekit_ship" then
+        if type(payload.ship) ~= "string" or payload.ship == ""
+                or type(payload.loadout) ~= "string" or payload.loadout == ""
+                or type(payload.station) ~= "string" or payload.station == "" then
+            DebugError("Co-captain bridge: rekit_ship command " .. tostring(command.id) .. " needs ship, loadout, station")
+            return false
+        end
+        AddUITriggeredEvent("CoCaptainBridge", "rekit_ship", {
+            ship = payload.ship,
+            loadout = payload.loadout,
+            station = payload.station,
+        })
+        return true
+    end
+
     if command.type == "set_weapons_hold" then
         local out = { hold = payload.hold ~= false }
         if type(payload.ship) == "string" and payload.ship ~= "" then
@@ -239,6 +263,17 @@ function external.fetchData()
         if external.hasResultChanged("fleet", fleet, {}) then
             payload.fleet = fleet
             external.lastChecksums["fleet"] = external.generateChecksum(fleet, {})
+        end
+    end
+
+    -- On-demand loadout report written by the get_ship_loadout bridge command.
+    local lok, loadout = pcall(function ()
+        return GetNPCBlackboard(ConvertStringTo64Bit(tostring(C.GetPlayerID())), "$cocaptain_loadout")
+    end)
+    if lok and type(loadout) == "table" then
+        if external.hasResultChanged("ship_loadout", loadout, {}) then
+            payload.ship_loadout = loadout
+            external.lastChecksums["ship_loadout"] = external.generateChecksum(loadout, {})
         end
     end
 
