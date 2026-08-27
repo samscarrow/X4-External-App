@@ -141,13 +141,13 @@
                             <set_value name="$DestSector" exact="player.sector" />
                         </do_else>
                         <do_if value="$DestSector">
-                            <set_value name="$Destination" exact="$DestSector" />
-                            <do_if value="event.param3.{'$x'}? or event.param3.{'$y'}? or event.param3.{'$z'}?">
-                                <set_value name="$X" exact="if event.param3.{'$x'}? then event.param3.{'$x'} else 0" />
-                                <set_value name="$Y" exact="if event.param3.{'$y'}? then event.param3.{'$y'} else 0" />
-                                <set_value name="$Z" exact="if event.param3.{'$z'}? then event.param3.{'$z'} else 0" />
-                                <set_value name="$Destination" exact="[$DestSector, position.[$X * 1km, $Y * 1km, $Z * 1km]]" />
-                            </do_if>
+                            <!-- MoveWait's destination param is type="position":
+                                 always a [sector, position] pair. A bare sector
+                                 makes the order finish instantly without moving. -->
+                            <set_value name="$X" exact="if event.param3.{'$x'}? then event.param3.{'$x'} else 0" />
+                            <set_value name="$Y" exact="if event.param3.{'$y'}? then event.param3.{'$y'} else 0" />
+                            <set_value name="$Z" exact="if event.param3.{'$z'}? then event.param3.{'$z'} else 0" />
+                            <set_value name="$Destination" exact="[$DestSector, position.[$X * 1km, $Y * 1km, $Z * 1km]]" />
                             <create_order id="'MoveWait'" object="$Ship" immediate="true" name="$MoveOrder">
                                 <param name="destination" value="$Destination" />
                             </create_order>
