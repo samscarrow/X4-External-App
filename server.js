@@ -34,7 +34,7 @@ app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
 // Command types the co-captain may enqueue for the in-game bridge
 const ALLOWED_COMMAND_TYPES = [
     'notify', 'logbook', 'set_guidance', 'fly_my_ship_to',
-    'order_ship_to', 'clear_ship_orders', 'ping_ship',
+    'order_ship_to', 'clear_ship_orders', 'ping_ship', 'set_weapons_hold',
 ];
 const COMMAND_QUEUE_LIMIT = 20;
 const COMMAND_HISTORY_LIMIT = 100;

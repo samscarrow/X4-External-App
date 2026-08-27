@@ -835,6 +835,27 @@ server.registerTool(
 );
 
 server.registerTool(
+    "set_weapons_hold",
+    {
+        title: "Weapons hold / weapons free on a player ship",
+        description: "hold=true disarms all turrets on a player-owned ship and issues an immediate " +
+            "cease-fire - for when an escort is destroying targets that must survive (e.g. boarding or " +
+            "mission targets). The disarm PERSISTS until released with hold=false, so always remind the " +
+            "player their ship is disarmed. Ship by ID code or exact name; omitted = the ship the player " +
+            "is aboard. Strictly on-request: only call when the player explicitly asked for weapons " +
+            "hold/free.",
+        inputSchema: {
+            ship: z.string().optional()
+                .describe("Ship ID code (e.g. 'JHL-824') or exact known ship name. Omitted: the ship the " +
+                    "player is currently aboard"),
+            hold: z.boolean().default(true)
+                .describe("true: turrets disarmed + cease fire. false: turrets re-armed (weapons free)"),
+        },
+    },
+    async ({ ship, hold }) => enqueueCommand("set_weapons_hold", { ship, hold })
+);
+
+server.registerTool(
     "ping_ship",
     {
         title: "Locate one of the player's ships",

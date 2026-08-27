@@ -273,6 +273,61 @@
             </actions>
         </cue>
         <!--
+          set_weapons_hold: weapons discipline for a ship that is too eager -
+          e.g. an escort shredding mission targets that must survive. hold=true
+          disarms all turrets (set_turrets_armed, persists until released) and
+          issues an immediate cease_fire; hold=false re-arms. Ship named by
+          idcode/exact name, or the ship the player is aboard when omitted.
+        -->
+        <cue name="CoCaptain_OnSetWeaponsHold" instantiate="true">
+            <conditions>
+                <event_ui_triggered screen="'CoCaptainBridge'" control="'set_weapons_hold'" />
+            </conditions>
+            <actions>
+                <do_if value="event.param3.{'$ship'}?">
+                    <set_value name="$ShipArg" exact="event.param3.{'$ship'}" />
+                    <set_value name="$Ship" exact="null" />
+                    <set_value name="$Matches" exact="0" />
+                    <find_ship name="$AllShips" space="player.galaxy" owner="faction.player" multiple="true" />
+                    <do_all exact="$AllShips.count" counter="$i">
+                        <do_if value="$AllShips.{$i}.idcode == $ShipArg or $AllShips.{$i}.knownname == $ShipArg">
+                            <set_value name="$Matches" operation="add" />
+                            <do_if value="not $Ship">
+                                <set_value name="$Ship" exact="$AllShips.{$i}" />
+                            </do_if>
+                        </do_if>
+                    </do_all>
+                    <do_if value="not $Ship">
+                        <show_notification text="'Co-captain: no owned ship matches ' + $ShipArg" />
+                    </do_if>
+                    <do_elseif value="$Matches gt 1">
+                        <show_notification text="'Co-captain: ' + $Matches + ' ships match ' + $ShipArg + ' - using ' + $Ship.knownname + ' ' + $Ship.idcode" />
+                    </do_elseif>
+                </do_if>
+                <do_else>
+                    <set_value name="$Ship" exact="player.occupiedship" />
+                    <do_if value="not $Ship.exists or $Ship.isclass.spacesuit or not $Ship.isplayerowned">
+                        <set_value name="$Ship" exact="null" />
+                        <show_notification text="'Co-captain: you are not aboard a ship of ours'" />
+                    </do_if>
+                </do_else>
+                <do_if value="$Ship">
+                    <do_if value="@event.param3.{'$hold'}">
+                        <set_turrets_armed object="$Ship" armed="false" />
+                        <cease_fire object="$Ship" />
+                        <show_notification text="'Co-captain: weapons hold on ' + $Ship.knownname + ' ' + $Ship.idcode" />
+                        <write_to_logbook category="general" title="'Co-captain order'" text="'Weapons hold: turrets disarmed on ' + $Ship.knownname + ' ' + $Ship.idcode" />
+                    </do_if>
+                    <do_else>
+                        <set_turrets_armed object="$Ship" armed="true" />
+                        <show_notification text="'Co-captain: weapons free on ' + $Ship.knownname + ' ' + $Ship.idcode" />
+                        <write_to_logbook category="general" title="'Co-captain order'" text="'Weapons free: turrets re-armed on ' + $Ship.knownname + ' ' + $Ship.idcode" />
+                    </do_else>
+                </do_if>
+            </actions>
+        </cue>
+
+        <!--
           Fleet telemetry: every 30s, sweep all player-owned ships into the
           player-entity blackboard var $cocaptain_fleet. ui/ea.lua reads it
           back via GetNPCBlackboard (keys arrive in Lua with the $ stripped)

@@ -139,6 +139,15 @@ function external.executeCommand (command)
         return true
     end
 
+    if command.type == "set_weapons_hold" then
+        local out = { hold = payload.hold ~= false }
+        if type(payload.ship) == "string" and payload.ship ~= "" then
+            out.ship = payload.ship
+        end
+        AddUITriggeredEvent("CoCaptainBridge", "set_weapons_hold", out)
+        return true
+    end
+
     if command.type == "ping_ship" then
         if type(payload.ship) ~= "string" or payload.ship == "" then
             DebugError("Co-captain bridge: ping_ship command " .. tostring(command.id) .. " has no ship")
