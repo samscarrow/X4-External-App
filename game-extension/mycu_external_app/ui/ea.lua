@@ -220,6 +220,19 @@ function external.fetchData()
         end
     end
 
+    -- Co-captain fleet telemetry: md/cocaptain_bridge.xml sweeps player ships
+    -- into this blackboard var every ~30s; forward it when it changes. Keys
+    -- arrive with MD's $ prefix stripped (idcode, name, sector, ...).
+    local ok, fleet = pcall(function ()
+        return GetNPCBlackboard(ConvertStringTo64Bit(tostring(C.GetPlayerID())), "$cocaptain_fleet")
+    end)
+    if ok and type(fleet) == "table" then
+        if external.hasResultChanged("fleet", fleet, {}) then
+            payload.fleet = fleet
+            external.lastChecksums["fleet"] = external.generateChecksum(fleet, {})
+        end
+    end
+
     return external.removeUnsupportedTypes(payload)
 end
 

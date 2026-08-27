@@ -278,16 +278,53 @@ server.registerTool(
     "get_fleet",
     {
         title: "Get player fleet",
-        description: "Player ships (name, class, type, sector, hull/shield health, commander) from a parsed savegame. " +
-            "Note: savegame data lags the live game by up to one autosave interval.",
-        inputSchema: savegameIdInput,
+        description: "Player ships, live from the in-game fleet telemetry sweep (~30s fresh): idcode " +
+            "(use it for order_ship_to/ping_ship), name, size (S/M/L/XL), purpose " +
+            "(fight/trade/mine/auxiliary/build/salvage/other), hull/shield %, sector, position (km), " +
+            "docked, current order id, fleet commander. Filter with `purpose`/`sector`/`q`. Falls back " +
+            "to parsed-savegame ships (stale by up to one autosave) when live telemetry is unavailable.",
+        inputSchema: {
+            purpose: z.string().optional()
+                .describe("Filter live fleet by purpose: fight, trade, mine, auxiliary, build, salvage, other"),
+            sector: z.string().optional().describe("Filter live fleet by sector name substring (case-insensitive)"),
+            q: z.string().optional().describe("Filter live fleet by name/idcode substring (case-insensitive)"),
+            savegame_id: z.number().int().optional()
+                .describe("Force the savegame fallback and pick which savegame (default: latest)"),
+        },
     },
-    async ({ savegame_id }) => {
+    async ({ purpose, sector, q, savegame_id }) => {
+        if (savegame_id === undefined) {
+            const live = await fetchJson("/api/data");
+            const fleet = live?.data?.fleet;
+            if (Array.isArray(fleet) && fleet.length > 0) {
+                let ships = fleet;
+                if (purpose) ships = ships.filter((s) => s.purpose === purpose);
+                if (sector) ships = ships.filter((s) => String(s.sector).toLowerCase().includes(sector.toLowerCase()));
+                if (q) {
+                    const needle = q.toLowerCase();
+                    ships = ships.filter((s) =>
+                        String(s.name).toLowerCase().includes(needle) ||
+                        String(s.idcode).toLowerCase().includes(needle));
+                }
+                return jsonResult({
+                    source: "live_telemetry",
+                    fleet_total: fleet.length,
+                    ship_count: ships.length,
+                    ships,
+                });
+            }
+        }
         const { id, meta, error } = await resolveSavegameId(savegame_id);
         if (error) return errorResult(error);
         const result = await fetchJson(`/api/savegames/${id}/ships`);
         if (result.error) return errorResult(result.error);
-        return jsonResult({ savegame: meta ?? { id }, ship_count: result.data.length, ships: result.data });
+        return jsonResult({
+            source: "savegame",
+            note: "Live fleet telemetry unavailable (needs the bridge extension version with CoCaptain_FleetSweep and a game restart)",
+            savegame: meta ?? { id },
+            ship_count: result.data.length,
+            ships: result.data,
+        });
     }
 );
 

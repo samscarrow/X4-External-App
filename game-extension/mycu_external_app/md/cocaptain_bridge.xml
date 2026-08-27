@@ -272,5 +272,68 @@
                 </do_else>
             </actions>
         </cue>
+        <!--
+          Fleet telemetry: every 30s, sweep all player-owned ships into the
+          player-entity blackboard var $cocaptain_fleet. ui/ea.lua reads it
+          back via GetNPCBlackboard (keys arrive in Lua with the $ stripped)
+          and attaches it to the telemetry POST as `fleet` when it changes.
+          Same instantiate+checkinterval pattern as the stock EA_callMessages.
+        -->
+        <cue name="CoCaptain_FleetSweep" instantiate="true" checkinterval="30s">
+            <actions>
+                <find_ship name="$Ships" space="player.galaxy" owner="faction.player" multiple="true" />
+                <set_value name="$Fleet" exact="[]" />
+                <do_all exact="$Ships.count" counter="$i">
+                    <set_value name="$S" exact="$Ships.{$i}" />
+                    <do_if value="$S.exists">
+                        <set_value name="$Size" exact="'S'" />
+                        <do_if value="$S.isclass.ship_xl">
+                            <set_value name="$Size" exact="'XL'" />
+                        </do_if>
+                        <do_elseif value="$S.isclass.ship_l">
+                            <set_value name="$Size" exact="'L'" />
+                        </do_elseif>
+                        <do_elseif value="$S.isclass.ship_m">
+                            <set_value name="$Size" exact="'M'" />
+                        </do_elseif>
+                        <set_value name="$Purpose" exact="'other'" />
+                        <do_if value="$S.primarypurpose == purpose.fight">
+                            <set_value name="$Purpose" exact="'fight'" />
+                        </do_if>
+                        <do_elseif value="$S.primarypurpose == purpose.trade">
+                            <set_value name="$Purpose" exact="'trade'" />
+                        </do_elseif>
+                        <do_elseif value="$S.primarypurpose == purpose.mine">
+                            <set_value name="$Purpose" exact="'mine'" />
+                        </do_elseif>
+                        <do_elseif value="$S.primarypurpose == purpose.auxiliary">
+                            <set_value name="$Purpose" exact="'auxiliary'" />
+                        </do_elseif>
+                        <do_elseif value="$S.primarypurpose == purpose.build">
+                            <set_value name="$Purpose" exact="'build'" />
+                        </do_elseif>
+                        <do_elseif value="$S.primarypurpose == purpose.salvage">
+                            <set_value name="$Purpose" exact="'salvage'" />
+                        </do_elseif>
+                        <append_to_list name="$Fleet" exact="table[
+                            $idcode = $S.idcode,
+                            $name = $S.knownname,
+                            $size = $Size,
+                            $purpose = $Purpose,
+                            $hull = ($S.hullpercentage)i,
+                            $shield = ($S.shieldpercentage)i,
+                            $sector = if $S.sector.exists then $S.sector.knownname else '',
+                            $x = if $S.isdocked then 0 else ($S.position.x / 1km)i,
+                            $y = if $S.isdocked then 0 else ($S.position.y / 1km)i,
+                            $z = if $S.isdocked then 0 else ($S.position.z / 1km)i,
+                            $docked = $S.isdocked,
+                            $order = if @$S.order.id then $S.order.id else '',
+                            $commander = if @$S.commander.exists then $S.commander.knownname else ''
+                        ]" />
+                    </do_if>
+                </do_all>
+                <set_value name="player.entity.$cocaptain_fleet" exact="$Fleet" />
+            </actions>
+        </cue>
     </cues>
 </mdscript>

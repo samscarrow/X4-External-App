@@ -267,7 +267,9 @@ class Server {
          * Handle data consumed by components
          */
         this.app.get('/api/data', (request, response) => {
-            if (!isPackaged && fs.existsSync(devFilePath)) {
+            // In local env, the dev-data.json snapshot is only a stand-in for
+            // when no game is posting - live data always wins when present.
+            if (!isPackaged && this.lastPostAt == null && fs.existsSync(devFilePath)) {
                 try {
                     // In local env - load from file
                     const raw = fs.readFileSync(devFilePath, 'utf8');
