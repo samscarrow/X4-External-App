@@ -274,6 +274,20 @@ const savegameIdInput = {
         .describe("Savegame DB id; defaults to the most recently parsed savegame"),
 };
 
+/** Derive an `accessible` verdict from the live fleet telemetry fields (older bridge builds lack them). */
+function withAccessibility(ship) {
+    const reasons = [];
+    if (ship.has_captain === false) reasons.push("no captain");
+    if (ship.operational === false) reasons.push("not operational (wreck/destroyed)");
+    if (ship.sector_known === false) reasons.push("sector unknown to player");
+    const known = "has_captain" in ship || "operational" in ship || "sector_known" in ship;
+    return {
+        ...ship,
+        accessible: known ? reasons.length === 0 : undefined,
+        ...(reasons.length ? { inaccessible_reason: reasons.join("; ") } : {}),
+    };
+}
+
 server.registerTool(
     "get_fleet",
     {
@@ -281,23 +295,29 @@ server.registerTool(
         description: "Player ships, live from the in-game fleet telemetry sweep (~30s fresh): idcode " +
             "(use it for order_ship_to/ping_ship), name, size (S/M/L/XL), purpose " +
             "(fight/trade/mine/auxiliary/build/salvage/other), hull/shield %, sector, position (km), " +
-            "docked, current order id, fleet commander. Filter with `purpose`/`sector`/`q`. Falls back " +
+            "docked, current order id, fleet commander, captain, and an `accessible` flag (has a captain, " +
+            "operational, sector known) with `inaccessible_reason` when false. Filter with " +
+            "`purpose`/`sector`/`q`/`accessible`. Falls back " +
             "to parsed-savegame ships (stale by up to one autosave) when live telemetry is unavailable.",
         inputSchema: {
             purpose: z.string().optional()
                 .describe("Filter live fleet by purpose: fight, trade, mine, auxiliary, build, salvage, other"),
             sector: z.string().optional().describe("Filter live fleet by sector name substring (case-insensitive)"),
             q: z.string().optional().describe("Filter live fleet by name/idcode substring (case-insensitive)"),
+            accessible: z.boolean().optional()
+                .describe("Filter live fleet by `accessible` (true = has a captain, operational, in a known sector; " +
+                    "false = uncrewed, wrecked, or stranded somewhere unknown). Only accessible ships can take orders."),
             savegame_id: z.number().int().optional()
                 .describe("Force the savegame fallback and pick which savegame (default: latest)"),
         },
     },
-    async ({ purpose, sector, q, savegame_id }) => {
+    async ({ purpose, sector, q, accessible, savegame_id }) => {
         if (savegame_id === undefined) {
             const live = await fetchJson("/api/data");
             const fleet = live?.data?.fleet;
             if (Array.isArray(fleet) && fleet.length > 0) {
-                let ships = fleet;
+                let ships = fleet.map(withAccessibility);
+                if (accessible !== undefined) ships = ships.filter((s) => s.accessible === accessible);
                 if (purpose) ships = ships.filter((s) => s.purpose === purpose);
                 if (sector) ships = ships.filter((s) => String(s.sector).toLowerCase().includes(sector.toLowerCase()));
                 if (q) {

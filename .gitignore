@@ -11,3 +11,5 @@ dev-data.json
 data/
 !mcp-server/data/
 dev-dist/
+# PM2 logs
+logs/

@@ -166,7 +166,7 @@ In Claude Code, the `/loop` command is a convenient way to keep that running.
 - `get_command_queue` — pending/delivered/executed command statuses
 - `cancel_command <id>` — cancel a not-yet-delivered command
 - `list_savegames` — parsed savegames with metadata
-- `get_fleet [purpose] [sector] [q] [savegame_id]` — live fleet (idcode, size, purpose, hull/shield, sector, position, order, commander); falls back to savegame ships
+- `get_fleet [purpose] [sector] [q] [accessible] [savegame_id]` — live fleet (idcode, size, purpose, hull/shield, sector, position, order, commander, captain, `accessible` + `inaccessible_reason`); falls back to savegame ships
 - `get_stations [savegame_id]` — stations from a savegame
 - `get_blueprints [savegame_id] [owned_only]` — known blueprints
 - `get_db_schema` — tables/DDL of the savegame DB

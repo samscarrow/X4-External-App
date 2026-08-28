@@ -502,7 +502,12 @@
                             $z = if @$S.dock.exists then 0 else ($S.position.z / 1km)i,
                             $docked = if @$S.dock.exists then true else false,
                             $order = if @$S.order.id then $S.order.id else '',
-                            $commander = if @$S.commander.exists then $S.commander.knownname else ''
+                            $commander = if @$S.commander.exists then $S.commander.knownname else '',
+                            $captain = if @$S.pilot.exists then $S.pilot.knownname else '',
+                            $has_captain = if @$S.pilot.exists then true else false,
+                            $sector_known = if $S.sector.exists then $S.sector.isknown else false,
+                            $operational = if $S.isoperational then true else false,
+                            $is_player_ship = if $S == player.occupiedship then true else false
                         ]" />
                     </do_if>
                 </do_all>

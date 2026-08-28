@@ -131,13 +131,16 @@ Beyond commands, the bridge also feeds the co-captain live fleet data — no sav
 parsing involved. `CoCaptain_FleetSweep` (MD, every 30s) runs
 `find_ship owner="faction.player"` and writes one entry per ship — `idcode`, `name`,
 `size` S/M/L/XL, `purpose` fight/trade/mine/auxiliary/build/salvage/other, `hull`/
-`shield` %, `sector` name, `x/y/z` km, `docked`, current `order` id, fleet `commander` —
+`shield` %, `sector` name, `x/y/z` km, `docked`, current `order` id, fleet `commander`,
+`captain` (pilot name), `has_captain`, `sector_known`, `operational`, `is_player_ship` —
 to the player-entity blackboard var `$cocaptain_fleet`. `ui/ea.lua` reads it back with
 `GetNPCBlackboard` (the MD `$` key prefix is stripped on the way into Lua — the reverse
 of the write direction) and attaches it to the telemetry POST as `fleet`, using the
 extension's own change-detection so it only transmits when the sweep changes (~every
 30s). The server merges it into `/api/data`; the MCP `get_fleet` tool serves it with
-purpose/sector/name filters, falling back to parsed-savegame ships when the live key is
+purpose/sector/name/accessible filters — deriving `accessible` (captain present, operational,
+sector known) plus an `inaccessible_reason` so it never recommends a ship that cannot
+actually take orders — falling back to parsed-savegame ships when the live key is
 absent. The `idcode` values are exactly what `order_ship_to` / `ping_ship` accept.
 
 ## Safety posture
