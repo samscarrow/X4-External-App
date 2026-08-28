@@ -252,31 +252,24 @@ The parser:
 3. Try parsing a different savegame
 4. Check server console for detailed error messages
 
-## Future Enhancements
+## Where this went
 
-This POC demonstrates the foundation for the full AI copilot system. Next steps:
+The parser was the first step; the pieces that were sketched as "future" here now live
+elsewhere in the repo:
 
-### Phase 2: Real-time Event Streaming
-- Integrate Alia5/X4-rest-server for live game events
-- Add WebSocket support for push updates
-- Track trade events, combat, missions in real-time
+- **Real-time events** — the app server diffs every game POST into a persistent `events`
+  table (`utils/eventClassifier.js`); no X4-rest-server integration was needed. Read it
+  via `await_events` / `search_events` in `mcp-server/README.md`.
+- **Game metadata** — an offline encyclopedia bundle (`mcp-server/data/encyclopedia.json`)
+  built from static game data replaces the X4FProjector plan.
+- **AI co-captain** — `mcp-server/` (tools over live, journal, and savegame data) and
+  `game-extension/` (the command bridge back into the game).
+- **Live fleet data** — `get_fleet` now reads a ~30s MD blackboard sweep from the game and
+  only falls back to the `ships` table here when the game is offline.
 
-### Phase 3: Game Data Metadata
-- Integrate bno1/X4FProjector to extract game metadata
-- Store ware stats, ship specs, module data
-- Use for calculations and enrichment
-
-### Phase 4: Advanced Analytics
-- Production efficiency tracking
-- Trade flow visualization
-- Market trend analysis
-- Station profitability reports
-
-### Phase 5: AI Copilot
-- LLM integration (Claude, OpenAI)
-- Natural language queries about game state
-- AI-powered recommendations
-- Automated insights and alerts
+Still open on the parser side: production efficiency, trade flow, and station
+profitability analytics over the historical savegame tables (roadmap Phase 4 in the
+main readme).
 
 ## API Examples
 
@@ -328,11 +321,10 @@ Same as X4-External-App main project.
 ## Credits
 
 - **Mistralys/x4-savegame-parser** - Inspiration for savegame parsing approach
-- **Alia5/X4-rest-server** - Future integration for real-time events
-- **bno1/X4FProjector** - Future integration for game metadata
+- **Alia5/X4-rest-server**, **bno1/X4FProjector** - Evaluated as options for live events / metadata; superseded by the in-repo events journal and encyclopedia
 - **mycumycu/X4-External-App** - Base dashboard application
 
 ---
 
-**Status**: ✅ Proof of Concept Complete
-**Next**: Integrate X4-rest-server for real-time event streaming
+**Status**: ✅ In production use — feeds the Savegame Info widget and the co-captain's savegame tools
+**Next**: Historical analytics over the savegame tables (roadmap Phase 4)

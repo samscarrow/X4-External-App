@@ -34,13 +34,14 @@ missing bridge is diagnosable rather than silent.
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /api/commands` `{type, payload}` | Enqueue (types: `notify`, `logbook`, `set_guidance`, `fly_my_ship_to`, `order_ship_to`, `clear_ship_orders`, `ping_ship`; queue cap 20) |
+| `POST /api/commands` `{type, payload}` | Enqueue (types: `notify`, `logbook`, `set_guidance`, `fly_my_ship_to`, `order_ship_to`, `clear_ship_orders`, `ping_ship`, `set_weapons_hold`, `get_ship_loadout`, `rekit_ship`; queue cap 20) |
 | `GET /api/commands` | `{pending, history}` with statuses |
 | `POST /api/commands/ack` `{ids}` | Mark delivered commands executed |
 | `DELETE /api/commands/:id` | Cancel a pending command |
 
-The MCP tools `notify_player`, `write_logbook`, `set_guidance`, `get_command_queue`, and
-`cancel_command` wrap these.
+The MCP tools wrap these one-to-one: `notify_player`, `write_logbook`, `set_guidance`,
+`fly_my_ship_to`, `order_ship_to`, `clear_ship_orders`, `ping_ship`, `set_weapons_hold`,
+`get_ship_loadout`, `rekit_ship`, plus `get_command_queue` and `cancel_command`.
 
 ## Command types
 
@@ -73,7 +74,8 @@ The patch adds three functions and one call in that callback:
 - `external.handleServerReply(response)` — `response:getJson()` (djfhe_http's parsed
   body), iterate `reply.commands`, collect executed ids, ack.
 - `external.executeCommand(command)` — per-type validation and dispatch:
-  `AddUITriggeredEvent("CoCaptainBridge", "notify"|"logbook", payloadTable)`. Commands
+  `AddUITriggeredEvent("CoCaptainBridge", <control>, payloadTable)`, where the control is
+  the command type (`fly_my_ship_to` is folded into the `order_ship_to` control). Commands
   with missing/invalid payloads (or unknown types) are **not acked**, so they stay
   `delivered` on the server and are diagnosable via `get_command_queue`.
 - `external.ackCommands(ids)` — `POST /api/commands/ack` with `{ ids = ... }` using the
@@ -96,9 +98,8 @@ lookups **`$`-prefixed**.
 ### 2. Mission Director: execute commands (`md/cocaptain_bridge.xml`)
 
 Listens for the UI events and performs the visible action. MD is the right layer: it can
-write logbook entries, show notifications, and later (Phase 5) issue real orders.
-
-Actual schema-validated actions (the originally sketched
+write logbook entries, show notifications, and issue real orders. One cue per command
+type; the two simplest are shown here as the pattern (the originally sketched
 `show_notification caption=... details=...` does **not** exist in the game schema):
 
 ```xml
@@ -149,6 +150,11 @@ absent. The `idcode` values are exactly what `order_ship_to` / `ping_ship` accep
   explicit ask. Landed 2026-08-26: `set_guidance` (HUD-only), `fly_my_ship_to` /
   `order_ship_to` (movement orders with MD-side guards, logbook audit trail, and
   arrival/cancellation feedback), `clear_ship_orders` (the undo), `ping_ship`
-  (HUD-only locate). All ship commands are restricted to player-owned ships and refuse
-  when the player is at the helm. Held deliberately: docking orders (station-name
-  ambiguity), combat and trade orders (bigger posture conversation).
+  (HUD-only locate). Landed 2026-08-27: `set_weapons_hold` (turret discipline),
+  `get_ship_loadout` (read-only armament report), `rekit_ship` (wharf refit through the
+  vanilla `Equip` order). All ship commands are restricted to player-owned ships and
+  refuse when the player is at the helm. Held deliberately: docking orders (station-name
+  ambiguity), attack and trade orders (bigger posture conversation).
+- Everything goes through a legitimate game mechanism — real orders, station refits,
+  vanilla guidance — never an instant state change. `rekit_ship` is the canonical
+  example: it deliberately uses the wharf flow instead of `apply_loadout`.

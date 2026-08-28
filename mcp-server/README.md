@@ -6,24 +6,31 @@ co-captain for X4: Foundations by reading the data streams X4-External-App alrea
 | Source | Freshness | Tools |
 |---|---|---|
 | Live telemetry (`POST /api/data` from the in-game Lua extension) | seconds | `get_live_state`, `get_logbook`, `await_events` |
-| Savegame SQLite DB (`data/x4_savegame.db`, filled by the watcher) | minutes (autosave cadence) | `get_fleet`, `get_stations`, `get_blueprints`, `list_savegames`, `get_db_schema`, `query_savegame_db` |
+| Live fleet telemetry (MD blackboard sweep relayed by the extension, see `../game-extension/COMMAND_BRIDGE.md`) | ~30s | `get_fleet` |
+| Savegame SQLite DB (`data/x4_savegame.db`, filled by the watcher) | minutes (autosave cadence) | `get_stations`, `get_blueprints`, `list_savegames`, `get_db_schema`, `query_savegame_db` (and `get_fleet` as a fallback) |
 | Persistent events journal (`events` table, written by the app server on every game POST) | seconds, survives restarts | `await_events`, `search_events`, `get_activity_summary`, `server_status` |
 | Tailored aggregations over live data | seconds | `get_trading_summary`, `situation_report` |
 | Static game encyclopedia (`data/encyclopedia.json`, extracted from the samscarrow/x4 repo) | offline, no game needed | `encyclopedia_search`, `encyclopedia_entry`, `production_chain` |
 | Host machine text-to-speech | — | `speak` |
-| Command queue → in-game bridge (`../game-extension/COMMAND_BRIDGE.md`) | next data POST (~2s) | `notify_player`, `write_logbook`, `get_command_queue`, `cancel_command` |
+| Command queue → in-game bridge (`../game-extension/COMMAND_BRIDGE.md`) | next data POST (~2s) | `notify_player`, `write_logbook`, `set_guidance`, `fly_my_ship_to`, `order_ship_to`, `clear_ship_orders`, `ping_ship`, `set_weapons_hold`, `get_ship_loadout`, `rekit_ship`, `get_command_queue`, `cancel_command` |
 
 Reading tools never change game state. The write path goes through a server-side command
-queue with an allowlist of command types (`notify`, `logbook`); commands only take effect
-in-game once the command bridge is wired into the Lua extension (see
-`../game-extension/COMMAND_BRIDGE.md`) — until then they park at `delivered` status,
-visible in `get_command_queue`.
+queue with an allowlist of command types (`notify`, `logbook`, `set_guidance`,
+`fly_my_ship_to`, `order_ship_to`, `clear_ship_orders`, `ping_ship`, `set_weapons_hold`,
+`get_ship_loadout`, `rekit_ship`) that the patched `mycu_external_app` extension executes
+through the Mission Director. Every ship command goes through a **legitimate game
+mechanism** (real orders, wharf refits, turret arming) — never an instant state change —
+and only on the player's explicit ask. If the bridge isn't installed in the game,
+commands park at `delivered` status, visible in `get_command_queue`.
 
 ## Prerequisites
 
-- Node.js 18+ (the parent app already requires Node 16+; use 18+ here for global `fetch`)
+- Node.js 22 LTS (18+ works for this server alone, but the parent app's `node-expat`
+  native module fails to build on Node 24 — stay on 22 for both)
 - X4-External-App server running (`node server.js` in the repo root) with:
   - the `mycu_external_app` extension installed in X4 (for live telemetry)
+  - the command bridge patched into it via `..\game-extension\install-bridge.ps1`
+    (for fleet telemetry and the write path)
   - `X4_SAVEGAME_PATH` set in `.env` (for savegame data)
 
 The server degrades gracefully: tools whose data source is unavailable return an explanatory
@@ -148,10 +155,18 @@ In Claude Code, the `/loop` command is a convenient way to keep that running.
 - `speak <text> [rate] [voice]` — read advice aloud via host TTS
 - `notify_player <text>` — queue an in-game notification (via command bridge)
 - `write_logbook <title> <text>` — queue an in-game logbook entry (via command bridge)
+- `set_guidance [sector] [x] [y] [z] | clear` — point the player's HUD guidance marker (vanilla guidance system, HUD-only)
+- `ping_ship <ship>` — HUD guidance marker that tracks one of the player's ships, plus its sector
+- `fly_my_ship_to [sector] [x] [y] [z]` — real MoveWait order for the ship the player is aboard
+- `order_ship_to <ship> [sector] [x] [y] [z]` — real MoveWait order for any player-owned ship (by `idcode` or name); arrival/cancellation come back through the events journal
+- `clear_ship_orders [ship]` — belay: cancel all orders on a ship (the undo)
+- `set_weapons_hold <hold> [ship]` — weapons hold (disarm turrets + cease fire, persists) / weapons free
+- `get_ship_loadout [ship]` — installed weapons/turrets + aggregate DPS, reported back through telemetry
+- `rekit_ship <ship> <loadout> <station>` — legitimate wharf refit: the ship flies to an equip-capable station and is refitted there
 - `get_command_queue` — pending/delivered/executed command statuses
 - `cancel_command <id>` — cancel a not-yet-delivered command
 - `list_savegames` — parsed savegames with metadata
-- `get_fleet [savegame_id]` — ships from a savegame (defaults to latest)
+- `get_fleet [purpose] [sector] [q] [savegame_id]` — live fleet (idcode, size, purpose, hull/shield, sector, position, order, commander); falls back to savegame ships
 - `get_stations [savegame_id]` — stations from a savegame
 - `get_blueprints [savegame_id] [owned_only]` — known blueprints
 - `get_db_schema` — tables/DDL of the savegame DB
@@ -161,15 +176,19 @@ In Claude Code, the `/loop` command is a convenient way to keep that running.
 
 - ~~**Phase 1**: read-only tools + `await_events` long-poll~~ ✓
 - ~~**Phase 2**: event severity tiers, id-based logbook diffing, text-to-speech output~~ ✓
-- **Phase 3**: write path — command queue piggybacked on the Lua extension's POST cycle ✓
-  (server + MCP tools done; in-game Lua/MD wiring documented in
-  `../game-extension/COMMAND_BRIDGE.md`, to be validated on the gaming PC)
+- ~~**Phase 3**: write path — command queue piggybacked on the Lua extension's POST cycle,
+  executed in-game by the patched extension (`../game-extension/`)~~ ✓ (validated in-game
+  2026-08-26)
 - ~~**Phase 4a**: persistent events journal + `search_events`, tailored trading/activity
   summaries, `situation_report`, `server_status`, inventory/agents live sections, unit tests~~ ✓
 - ~~**Phase 4b (encyclopedia)**: offline game database tools backed by the samscarrow/x4
   repo's static data~~ ✓ — regenerate the bundle with
   `node scripts/build-encyclopedia.mjs /path/to/x4` when that repo's data updates
-- **Phase 5**: fleet orders via the command bridge / SirNukes APIs
+- **Phase 5 (in progress)**: fleet orders via the command bridge, one allowlisted command
+  type at a time, advise-by-default. Landed: `set_guidance`, `ping_ship`, `fly_my_ship_to`,
+  `order_ship_to`, `clear_ship_orders`, live `get_fleet`, `set_weapons_hold`,
+  `get_ship_loadout`, `rekit_ship`. Held: docking, attack and trade orders (see the
+  safety posture in `../game-extension/COMMAND_BRIDGE.md`)
 
 ## Troubleshooting
 

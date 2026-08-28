@@ -24,4 +24,4 @@ Copy-Item (Join-Path $src 'md\cocaptain_bridge.xml') (Join-Path $extDir 'md\coca
 
 Write-Host "Co-captain bridge installed into $extDir"
 Write-Host "  ui\ea.lua              (patched: parses /api/data reply, acks commands)"
-Write-Host "  md\cocaptain_bridge.xml (executes notify/logbook via Mission Director)"
+Write-Host "  md\cocaptain_bridge.xml (executes co-captain commands + fleet sweep via Mission Director)"

@@ -2,6 +2,9 @@
   "author": "Mycu",
   "name": "x4_external_app",
   "version": "3.6.1",
+  "engines": {
+    "node": ">=18 <24"
+  },
   "bin": "server.js",
   "pkg": {
     "assets": [

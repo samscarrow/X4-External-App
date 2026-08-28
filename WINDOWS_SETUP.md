@@ -6,18 +6,20 @@ This guide covers setting up the X4-External-App with savegame parser integratio
 
 ### 1. Install Node.js for Windows
 
-Download and install Node.js (v16 or higher) from:
+Download and install **Node.js 22 LTS** from:
 **https://nodejs.org/en/download**
 
 Choose the **Windows Installer (.msi)** for your system (64-bit recommended).
+Do **not** use Node 24: the `node-expat` native module the server depends on fails to
+build there and the app crashes on start.
 
 After installation, verify in PowerShell or Command Prompt:
 ```powershell
 node --version
-# Should show: v16.x.x or higher
+# Should show: v22.x.x
 
 npm --version
-# Should show: 8.x.x or higher
+# Should show: 10.x.x or higher
 ```
 
 ### 2. Install Git for Windows (Optional)
@@ -34,7 +36,6 @@ If you want to clone the repository:
 cd C:\Users\YourName\Documents
 git clone https://github.com/samscarrow/X4-External-App.git
 cd X4-External-App
-git checkout claude/integrate-x4-libraries-011CULfJXkccJeTE3wyMAUy3
 ```
 
 ### Option 2: Download ZIP
@@ -171,7 +172,7 @@ This will:
 
 **Expected console output:**
 ```
-X4 External App Server v3.3.0
+X4 External App Server v3.6.1
 Database initialized at C:\X4-External-App\data\x4_savegame.db
 ✓ Watching savegames at: C:\Users\Sam\Documents\Egosoft\X4\12345678\save
 Parsing savegame: quicksave-001.xml.gz
@@ -438,10 +439,9 @@ Once you have the savegame parser working:
 
 1. **Explore the API** - See `SAVEGAME_INTEGRATION.md` for API documentation
 2. **Customize the widget** - Modify `src/widgets/savegame_info/SavegameInfoWidget.vue`
-3. **Phase 2: Real-time Events** - Integrate X4-rest-server for live game events
-4. **Phase 3: Game Metadata** - Add X4FProjector for ware/ship data
-5. **Phase 4: Analytics** - Build production tracking and trade flow analysis
-6. **Phase 5: AI Copilot** - Integrate Claude API for intelligent assistance
+3. **Set up the co-captain** - Register the MCP server with Claude Code
+   (`mcp-server/README.md`) and install the in-game command bridge with
+   `game-extension\install-bridge.ps1` (`game-extension/COMMAND_BRIDGE.md`)
 
 ## Useful PowerShell Commands
 
@@ -467,6 +467,7 @@ Get-Item data\x4_savegame.db | Select-Object FullName, Length, LastWriteTime
 For issues or questions:
 - Check `SAVEGAME_INTEGRATION.md` for detailed technical documentation
 - Review the main `README.md` for general app information
+- See `mcp-server/README.md` for co-captain troubleshooting
 - Check the GitHub repository for updates and issues
 
 ---

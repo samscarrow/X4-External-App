@@ -3,7 +3,7 @@
 External dashboard for X4: Foundations that displays real-time game data on separate devices (monitors, tablets, smartphones).
 
 ![X4 External App](https://img.shields.io/badge/X4-Foundations-blue)
-![Node.js](https://img.shields.io/badge/Node.js-16+-green)
+![Node.js](https://img.shields.io/badge/Node.js-22_LTS-green)
 ![Vue.js](https://img.shields.io/badge/Vue.js-3-brightgreen)
 
 ## Features
@@ -32,7 +32,7 @@ Features:
 - 💾 **SQLite database** - Persistent storage for historical analysis
 - 🌐 **REST API** - Access game state data programmatically
 - 📊 **Interactive UI** - Browse ships, stations, and blueprints
-- 🤖 **AI Copilot Ready** - Foundation for intelligent game assistance
+- 🤖 **AI Co-Captain** - MCP server that lets Claude read live telemetry and issue allowlisted in-game orders (see `mcp-server/`)
 
 ### Customizable Layout
 - 1-4 column layouts
@@ -224,34 +224,38 @@ Tables:
 ## Documentation
 
 - **[WINDOWS_SETUP.md](WINDOWS_SETUP.md)** - Detailed Windows setup guide
-- **[SAVEGAME_INTEGRATION.md](SAVEGAME_INTEGRATION.md)** - Savegame parser technical documentation
-- **API Documentation** - See SAVEGAME_INTEGRATION.md for API details
+- **[SAVEGAME_INTEGRATION.md](SAVEGAME_INTEGRATION.md)** - Savegame parser technical documentation and REST API
+- **[mcp-server/README.md](mcp-server/README.md)** - Co-captain MCP server: tools, events journal, TTS, registering with Claude Code
+- **[game-extension/COMMAND_BRIDGE.md](game-extension/COMMAND_BRIDGE.md)** - Command bridge protocol: how co-captain commands reach the game and the safety posture
+- **[design.md](design.md)** - Working notes on widgets, endpoints, and dev testing
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────┐
 │  X4 Foundations Game                    │
-│  ├── HTTP Mod (real-time data)          │
+│  ├── mycu_external_app (Lua, ~2s POST)  │
+│  │    + co-captain bridge (MD cues)     │
 │  └── Savegame Files (periodic state)    │
-└───────────────┬─────────────────────────┘
-                │
-                ▼
+└───────────────┬───────────▲─────────────┘
+                │ telemetry │ commands (in the POST reply)
+                ▼           │
 ┌─────────────────────────────────────────┐
 │  X4 External App Server (Node.js)       │
 │  ├── Express.js Backend                 │
-│  ├── Savegame Parser                    │
-│  ├── File Watcher                       │
-│  └── SQLite Database                    │
-└───────────────┬─────────────────────────┘
-                │
-                ▼
-┌─────────────────────────────────────────┐
-│  Vue.js 3 Frontend                      │
-│  ├── Dashboard Widgets                  │
-│  ├── Customizable Layout                │
-│  └── Real-time Updates                  │
-└─────────────────────────────────────────┘
+│  ├── Savegame Parser + File Watcher     │
+│  ├── Events Journal (SQLite)            │
+│  └── Command Queue (allowlisted types)  │
+└──────┬──────────────────────┬───────────┘
+       │                      │
+       ▼                      ▼
+┌──────────────────┐  ┌──────────────────────┐
+│ Vue.js 3 Frontend│  │ Co-Captain MCP Server│
+│ ├── Widgets      │  │ (mcp-server/, stdio) │
+│ ├── Layout       │  │ ├── read tools       │
+│ └── Live updates │  │ ├── await_events     │
+└──────────────────┘  │ └── ship orders      │
+                      └──────────────────────┘
 ```
 
 ## Technology Stack
@@ -272,7 +276,7 @@ Tables:
 ## Development
 
 ### Prerequisites
-- Node.js 16+ and npm
+- Node.js 22 LTS and npm (Node 24 is not supported: the `node-expat` native module fails to build)
 - Git (optional)
 
 ### Setup
@@ -299,15 +303,18 @@ X4-External-App/
 │   ├── database.js        # SQLite database service
 │   ├── savegameParser.js  # Savegame parsing logic
 │   └── savegameWatcher.js # File watching service
+├── utils/                 # Shared helpers (event classifier, ...)
 ├── src/                   # Frontend source
 │   ├── components/        # Shared UI components
 │   ├── widgets/           # Dashboard widgets
 │   │   ├── player_profile/
-│   │   ├── savegame_info/ # NEW: Savegame widget
+│   │   ├── savegame_info/ # Savegame widget
 │   │   └── ...
 │   ├── lang/              # Translations
 │   └── scss/              # Styles
-├── server.js              # Express.js server
+├── mcp-server/            # Co-captain MCP server (own package, see its README)
+├── game-extension/        # Command-bridge patch for mycu_external_app + installer
+├── server.js              # Express.js server (telemetry, savegames, command queue)
 ├── vite.config.js         # Vite configuration
 └── package.json           # Dependencies
 ```
@@ -328,17 +335,15 @@ X4-External-App/
 - REST API endpoints
 - Savegame Info widget
 
-### 🔄 Phase 2: Real-time Event Streaming (IN PROGRESS)
-- Integrate X4-rest-server for live game events
-- WebSocket support for real-time push updates
-- Trade event tracking
-- Combat event tracking
+### ✅ Phase 2: Real-time Events (COMPLETE, via the events journal)
+- The app server diffs every game POST and persists classified events to SQLite
+  (`await_events` / `search_events` in the MCP server) — no X4-rest-server needed
+- Trade, credit, mission, faction, and combat-logbook events with severity tiers
 
-### 📋 Phase 3: Game Metadata Integration
-- Integrate X4FProjector for game data
-- Ware statistics and pricing
-- Ship specifications
-- Module data
+### ✅ Phase 3: Game Metadata (COMPLETE, via the static encyclopedia)
+- Ships, wares, modules, equipment, and factions bundled in `mcp-server/data/encyclopedia.json`
+  (`encyclopedia_search`, `encyclopedia_entry`, `production_chain`) — built from the
+  samscarrow/x4 static data instead of X4FProjector
 
 ### 📊 Phase 4: Advanced Analytics
 - Production efficiency tracking
@@ -346,11 +351,13 @@ X4-External-App/
 - Market trend analysis
 - Station profitability reports
 
-### 🤖 Phase 5: AI Copilot
-- LLM integration (Claude API, OpenAI)
-- Natural language queries about game state
-- AI-powered recommendations
-- Automated insights and alerts
+### 🤖 Phase 5: AI Co-Captain (IN PROGRESS)
+- ✅ MCP server for the LLM co-captain (see `mcp-server/`): situation reports, event loop, TTS
+- ✅ Command bridge into the game (see `game-extension/COMMAND_BRIDGE.md`): notifications,
+  logbook entries, HUD guidance, live fleet telemetry
+- ✅ First fleet orders through legitimate game mechanisms: move orders, belay, weapons hold,
+  loadout report, wharf refit — one allowlisted command type at a time, advise-by-default
+- Docking, attack, and trade orders (held pending a posture decision)
 
 ## Troubleshooting
 
@@ -393,9 +400,10 @@ Contributions are welcome! Areas for improvement:
 - Contributors: Claude (AI assistant)
 
 **Related Projects:**
-- Alia5/X4-rest-server - REST server for X4 (future integration)
-- bno1/X4FProjector - Game data extractor (future integration)
-- SirNukes Mod Support APIs - X4 modding framework
+- mycumycu/mycu_external_app - The in-game Lua extension the command bridge patches
+- samscarrow/x4 - Static game data the encyclopedia bundle is built from
+- Alia5/X4-rest-server, bno1/X4FProjector - Evaluated; superseded by the events journal and static encyclopedia
+- SirNukes Mod Support APIs - X4 modding framework (reference for the Lua→MD conventions)
 
 ## License
 
