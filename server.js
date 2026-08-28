@@ -12,6 +12,7 @@ const hostname = process.env.APP_HOST || '127.0.0.1';
 const port = process.env.APP_PORT || 8080;
 
 const chalk = require('chalk');
+const compression = require('compression');
 const { version } = require("./package.json");
 const { normalizeObjectRecursively } = require('./utils/textProcessor');
 
@@ -30,6 +31,9 @@ const GAME_STALE_MS = 15000;
 
 app.use(bodyParser.json({ limit: '50mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
+
+// gzip responses over 1 KB (the live snapshot and fleet payloads are large JSON)
+app.use(compression({ threshold: 1024, level: 6 }));
 
 // Command types the co-captain may enqueue for the in-game bridge
 const ALLOWED_COMMAND_TYPES = [
