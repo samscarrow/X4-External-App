@@ -24,6 +24,7 @@ const devFilePath = path.join(runtimeDir, 'dev-data.json');
 const DatabaseService = require('./services/database');
 const SavegameParser = require('./services/savegameParser');
 const SavegameWatcher = require('./services/savegameWatcher');
+const { loadLoadouts } = require('./services/loadoutsLoader');
 const { EventDiffer } = require('./utils/eventClassifier');
 
 // Game considered offline after this long without a data POST
@@ -450,6 +451,15 @@ class Server {
             try {
                 const savegames = this.db.getAllSavegames();
                 response.json(savegames);
+            } catch (error) {
+                response.status(500).json({ error: error.message });
+            }
+        });
+
+        // Player-saved ship loadouts (from the profile's loadouts.xml, next to the save folder)
+        this.app.get('/api/loadouts', (request, response) => {
+            try {
+                response.json(loadLoadouts());
             } catch (error) {
                 response.status(500).json({ error: error.message });
             }

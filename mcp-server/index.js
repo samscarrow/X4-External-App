@@ -892,24 +892,79 @@ server.registerTool(
 );
 
 server.registerTool(
+    "list_loadouts",
+    {
+        title: "List player-saved ship loadouts",
+        description: "Loadouts the player saved in the wharf UI (from the profile's loadouts.xml): id " +
+            "(`player_<timestamp>` - what `rekit_ship` needs), name, ship macro it applies to, and a " +
+            "weapon/turret/shield summary. A loadout is only valid for ships of the same macro - compare " +
+            "with `get_ship_loadout` output. Filter by name substring or macro substring.",
+        inputSchema: {
+            q: z.string().optional().describe("Name substring (case-insensitive)"),
+            macro: z.string().optional().describe("Ship macro substring, e.g. 'par_m_corvette'"),
+        },
+    },
+    async ({ q, macro }) => {
+        const result = await fetchJson("/api/loadouts");
+        if (result.error) return errorResult(result.error);
+        let loadouts = result.data?.loadouts ?? [];
+        if (q) loadouts = loadouts.filter((l) => String(l.name).toLowerCase().includes(q.toLowerCase()));
+        if (macro) loadouts = loadouts.filter((l) => String(l.macro).toLowerCase().includes(macro.toLowerCase()));
+        return jsonResult({ file: result.data?.file, count: loadouts.length, loadouts });
+    }
+);
+
+/** Resolve a loadout given by id or saved name; ship_macro disambiguates same-name loadouts. */
+async function resolveLoadout(loadout, shipMacro) {
+    if (/^player_\d+$/.test(loadout)) return { id: loadout };
+    const result = await fetchJson("/api/loadouts");
+    if (result.error) return { error: result.error };
+    const all = result.data?.loadouts ?? [];
+    let matches = all.filter((l) => String(l.name).toLowerCase() === loadout.toLowerCase());
+    if (matches.length === 0) return { id: loadout, note: "not a saved loadout name; passed through as a loadout id" };
+    if (shipMacro) {
+        const byMacro = matches.filter((l) => String(l.macro).toLowerCase().includes(shipMacro.toLowerCase()));
+        if (byMacro.length) matches = byMacro;
+    }
+    if (matches.length > 1) {
+        return {
+            error: `Loadout name '${loadout}' is ambiguous - pass ship_macro or the id: ` +
+                matches.map((l) => `${l.id} (${l.macro})`).join(", "),
+        };
+    }
+    return { id: matches[0].id, name: matches[0].name, macro: matches[0].macro };
+}
+
+server.registerTool(
     "rekit_ship",
     {
         title: "Refit a ship at a wharf with a different loadout",
         description: "The legitimate refit path: creates a ship-modification build at an equip-capable " +
             "station and issues the vanilla Equip order - the ship flies there, docks, and is refitted " +
-            "by the station. `loadout` is a loadout ID valid for the ship's hull: a player-saved loadout " +
-            "id from the wharf UI, or a predefined one. Strictly on-request: NEVER call unless the " +
+            "by the station. `loadout` is a player-saved loadout (see `list_loadouts`) given by exact " +
+            "saved name or `player_<timestamp>` id; it must match the ship's macro (`get_ship_loadout`). " +
+            "Strictly on-request: NEVER call unless the " +
             "player explicitly asked for this refit. Success signal is the in-game ticker + logbook " +
             "entry; a 'refit build failed' ticker means the loadout id was not valid for that hull.",
         inputSchema: {
             ship: z.string().min(1).describe("Ship ID code (e.g. 'JHL-824') or exact known ship name"),
             loadout: z.string().min(1)
-                .describe("Loadout ID valid for the ship's hull (player-saved loadout id or predefined)"),
+                .describe("Saved loadout name (exact) or id `player_<timestamp>` from list_loadouts"),
             station: z.string().min(1)
                 .describe("Exact known name of an equip-capable station (wharf/shipyard/equipment dock)"),
+            ship_macro: z.string().optional()
+                .describe("Ship macro substring to disambiguate same-name loadouts (from get_ship_loadout)"),
         },
     },
-    async ({ ship, loadout, station }) => enqueueCommand("rekit_ship", { ship, loadout, station })
+    async ({ ship, loadout, station, ship_macro }) => {
+        const resolved = await resolveLoadout(loadout, ship_macro);
+        if (resolved.error) return errorResult(resolved.error);
+        const queued = await enqueueCommand("rekit_ship", { ship, loadout: resolved.id, station });
+        if (resolved.name) {
+            queued.content.unshift({ type: "text", text: `Loadout '${resolved.name}' → ${resolved.id} (${resolved.macro})` });
+        }
+        return queued;
+    }
 );
 
 server.registerTool(

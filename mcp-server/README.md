@@ -162,7 +162,8 @@ In Claude Code, the `/loop` command is a convenient way to keep that running.
 - `clear_ship_orders [ship]` — belay: cancel all orders on a ship (the undo)
 - `set_weapons_hold <hold> [ship]` — weapons hold (disarm turrets + cease fire, persists) / weapons free
 - `get_ship_loadout [ship]` — installed weapons/turrets + aggregate DPS, reported back through telemetry
-- `rekit_ship <ship> <loadout> <station>` — legitimate wharf refit: the ship flies to an equip-capable station and is refitted there
+- `list_loadouts [q] [macro]` — player-saved wharf loadouts (id `player_<timestamp>`, name, ship macro, weapon/turret/shield summary) from the profile's `loadouts.xml`
+- `rekit_ship <ship> <loadout> <station> [ship_macro]` — legitimate wharf refit: the ship flies to an equip-capable station and is refitted there
 - `get_command_queue` — pending/delivered/executed command statuses
 - `cancel_command <id>` — cancel a not-yet-delivered command
 - `list_savegames` — parsed savegames with metadata
