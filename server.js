@@ -40,7 +40,7 @@ app.use(compression({ threshold: 1024, level: 6 }));
 const ALLOWED_COMMAND_TYPES = [
     'notify', 'logbook', 'set_guidance', 'fly_my_ship_to',
     'order_ship_to', 'clear_ship_orders', 'ping_ship', 'set_weapons_hold',
-    'get_ship_loadout', 'rekit_ship',
+    'get_ship_loadout', 'rekit_ship', 'set_weapon_group',
 ];
 const COMMAND_QUEUE_LIMIT = 20;
 const COMMAND_HISTORY_LIMIT = 100;

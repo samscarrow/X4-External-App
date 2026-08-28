@@ -58,9 +58,21 @@ function classifyRelation (from, to) {
  * posting); it returns the classified events for each transition. The first
  * call establishes a baseline and emits nothing.
  */
+const HULL_RANK = { ok: 0, damaged: 1, critical: 2 };
+const IDLE_PURPOSES = new Set(['fight', 'trade', 'mine']);
+/** ok >= 50%, damaged 25-49%, critical < 25%. Unknown hull counts as ok. */
+function hullBucketOf (hull) {
+    if (typeof hull !== 'number') return 'ok';
+    if (hull < 25) return 'critical';
+    if (hull < 50) return 'damaged';
+    return 'ok';
+}
+
 class EventDiffer {
     constructor (config = thresholds()) {
         this.config = config;
+        this.fleetState = new Map();
+        this.fleetInitialized = false;
         this.initialized = false;
         this.gameOnline = null;
         this.credits = null;
@@ -151,6 +163,10 @@ class EventDiffer {
             }
         }
 
+        if (online) {
+            events.push(...this.diffFleet(gameData.fleet));
+        }
+
         const saveId = latestSavegame?.id ?? null;
         if (this.initialized && saveId != null && saveId !== this.latestSavegameId) {
             events.push({
@@ -165,10 +181,72 @@ class EventDiffer {
         this.initialized = true;
         return events;
     }
+
+    /**
+     * Fleet telemetry diff (live sweep from the command bridge, keyed by idcode).
+     * Emits ship_lost / ship_added / ship_hull_critical / ship_uncrewed / ship_idle.
+     * A sweep is only trusted when it is a non-empty array - an empty one means the
+     * bridge has not reported yet, not that the fleet is gone.
+     */
+    diffFleet (fleet) {
+        const events = [];
+        if (!Array.isArray(fleet) || fleet.length === 0) return events;
+        const seen = new Set();
+        const describe = (s) => ({ idcode: s.idcode, name: s.name, size: s.size, purpose: s.purpose, sector: s.sector });
+
+        for (const ship of fleet) {
+            if (!ship?.idcode) continue;
+            seen.add(ship.idcode);
+            const prev = this.fleetState.get(ship.idcode);
+            const hullBucket = hullBucketOf(ship.hull);
+            const next = {
+                hullBucket,
+                order: ship.order ?? '',
+                hasCaptain: ship.has_captain,
+                snapshot: describe(ship),
+            };
+
+            if (this.fleetInitialized && !prev) {
+                events.push({ type: 'ship_added', severity: 'notable', ...next.snapshot, hull: ship.hull });
+            } else if (prev) {
+                if (hullBucket !== prev.hullBucket && hullBucket !== 'ok' && HULL_RANK[hullBucket] > HULL_RANK[prev.hullBucket]) {
+                    events.push({
+                        type: 'ship_hull_critical',
+                        severity: hullBucket === 'critical' ? 'urgent' : 'notable',
+                        ...next.snapshot,
+                        hull: ship.hull,
+                        shield: ship.shield,
+                    });
+                }
+                if (prev.hasCaptain === true && ship.has_captain === false) {
+                    events.push({ type: 'ship_uncrewed', severity: 'notable', ...next.snapshot });
+                }
+                if (prev.order && !next.order && IDLE_PURPOSES.has(ship.purpose)) {
+                    events.push({ type: 'ship_idle', severity: 'info', ...next.snapshot, last_order: prev.order });
+                }
+            }
+            this.fleetState.set(ship.idcode, next);
+        }
+
+        for (const [idcode, prev] of this.fleetState) {
+            if (seen.has(idcode)) continue;
+            events.push({
+                type: 'ship_lost',
+                severity: 'urgent',
+                ...prev.snapshot,
+                note: 'left the player fleet: destroyed, sold, scrapped or captured',
+            });
+            this.fleetState.delete(idcode);
+        }
+
+        this.fleetInitialized = true;
+        return events;
+    }
 }
 
 module.exports = {
     SEVERITY_RANK,
+    hullBucketOf,
     maxSeverity,
     thresholds,
     logbookKey,

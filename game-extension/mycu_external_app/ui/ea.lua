@@ -172,6 +172,28 @@ function external.executeCommand (command)
         return true
     end
 
+    if command.type == "set_weapon_group" then
+        local group = tonumber(payload.group)
+        if not group or group < 1 or group > 4 then
+            DebugError("Co-captain bridge: set_weapon_group command " .. tostring(command.id) .. " has no valid group (1-4)")
+            return false
+        end
+        local out = { group = group, primary = payload.primary ~= false, activate = payload.activate == true }
+        if type(payload.ship) == "string" and payload.ship ~= "" then
+            out.ship = payload.ship
+        end
+        if type(payload.weapons) == "table" then
+            for i, macro in ipairs(payload.weapons) do
+                if i > 8 then break end
+                if type(macro) == "string" and macro ~= "" then
+                    out["w" .. i] = macro
+                end
+            end
+        end
+        AddUITriggeredEvent("CoCaptainBridge", "set_weapon_group", out)
+        return true
+    end
+
     if command.type == "ping_ship" then
         if type(payload.ship) ~= "string" or payload.ship == "" then
             DebugError("Co-captain bridge: ping_ship command " .. tostring(command.id) .. " has no ship")

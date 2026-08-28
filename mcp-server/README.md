@@ -79,6 +79,10 @@ response, never silently lost):
 | `logbook_entries` | per entry: `urgent` on combat pattern match, `notable` if highlighted or money ≥ notable threshold, else `info`; the event takes the max |
 | `credits_changed` | `urgent` on a loss ≥ urgent threshold, `notable` on \|delta\| ≥ notable threshold, else `info` |
 | `faction_relation_changed` | `urgent` when the relation drops while negative (shots may follow), else `notable` |
+| `ship_lost` | `urgent` — a ship left the live fleet sweep (destroyed, sold, scrapped or captured) |
+| `ship_hull_critical` | `urgent` when hull drops below 25%, `notable` below 50% (fires once per crossing) |
+| `ship_added`, `ship_uncrewed` | `notable` — new ship in the fleet (purchase/capture); a ship lost its captain |
+| `ship_idle` | `info` — a fight/trade/mine ship's order cleared |
 | `active_mission_changed`, `game_offline` | `notable` |
 | `mission_offers_changed`, `savegame_parsed`, `game_online` | `info` |
 
@@ -161,6 +165,7 @@ In Claude Code, the `/loop` command is a convenient way to keep that running.
 - `order_ship_to <ship> [sector] [x] [y] [z]` — real MoveWait order for any player-owned ship (by `idcode` or name); arrival/cancellation come back through the events journal
 - `clear_ship_orders [ship]` — belay: cancel all orders on a ship (the undo)
 - `set_weapons_hold <hold> [ship]` — weapons hold (disarm turrets + cease fire, persists) / weapons free
+- `set_weapon_group <group> <weapons[]> [ship] [primary] [activate]` — cockpit weapon group config: weapons by macro substring or 'all'; matched join group 1-4, others leave it (primary = guns, secondary = missile launchers)
 - `get_ship_loadout [ship]` — installed weapons/turrets + aggregate DPS, reported back through telemetry
 - `list_loadouts [q] [macro]` — player-saved wharf loadouts (id `player_<timestamp>`, name, ship macro, weapon/turret/shield summary) from the profile's `loadouts.xml`
 - `rekit_ship <ship> <loadout> <station> [ship_macro]` — legitimate wharf refit: the ship flies to an equip-capable station and is refitted there

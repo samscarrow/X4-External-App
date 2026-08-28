@@ -367,6 +367,26 @@
                     <do_all exact="@$Weapons.count" counter="$i">
                         <append_to_list name="$WeaponList" exact="if @$Weapons.{$i}.macro.name then $Weapons.{$i}.macro.name else 'unknown'" />
                     </do_all>
+                    <!-- Weapon-group membership per weapon (parallel to $weapons): e.g. 'primary:1,2' -->
+                    <set_value name="$GroupList" exact="[]" />
+                    <do_all exact="@$Weapons.count" counter="$i">
+                        <set_value name="$W" exact="$Weapons.{$i}" />
+                        <set_value name="$IsPrimary" exact="not $W.isclass.missilelauncher" />
+                        <set_value name="$Groups" exact="''" />
+                        <do_all exact="4" counter="$g">
+                            <set_value name="$InGroup" exact="false" />
+                            <do_if value="$IsPrimary">
+                                <set_value name="$InGroup" exact="@$Ship.primaryweapons.{$g}.list.indexof.{$W} gt 0" />
+                            </do_if>
+                            <do_else>
+                                <set_value name="$InGroup" exact="@$Ship.secondaryweapons.{$g}.list.indexof.{$W} gt 0" />
+                            </do_else>
+                            <do_if value="$InGroup">
+                                <set_value name="$Groups" exact="if $Groups == '' then '' + $g else $Groups + ',' + $g" />
+                            </do_if>
+                        </do_all>
+                        <append_to_list name="$GroupList" exact="(if $IsPrimary then 'primary:' else 'secondary:') + $Groups" />
+                    </do_all>
                     <set_value name="$TurretList" exact="[]" />
                     <do_all exact="@$Turrets.count" counter="$i">
                         <append_to_list name="$TurretList" exact="if @$Turrets.{$i}.macro.name then $Turrets.{$i}.macro.name else 'unknown'" />
@@ -376,12 +396,97 @@
                         $name = $Ship.knownname,
                         $macro = if @$Ship.macro.name then $Ship.macro.name else '',
                         $weapons = $WeaponList,
+                        $weapon_groups = $GroupList,
+                        $active_primary_group = if @$Ship.activeweapongroup.primary then ($Ship.activeweapongroup.primary)i else 0,
+                        $active_secondary_group = if @$Ship.activeweapongroup.secondary then ($Ship.activeweapongroup.secondary)i else 0,
                         $turrets = $TurretList,
                         $dps_all = if @$Ship.dps.all then ($Ship.dps.all)i else 0,
                         $dps_turrets = if @$Ship.dps.secondary then ($Ship.dps.secondary)i else 0,
                         $game_time = (player.age / 1s)i
                     ]" />
                     <show_notification text="'Co-captain: loadout report ready for ' + $Ship.knownname + ' ' + $Ship.idcode" />
+                </do_if>
+            </actions>
+        </cue>
+
+        <!--
+          set_weapon_group: configure a cockpit weapon group on a player ship -
+          the same thing the ship's weapon-configuration panel does. Weapons are
+          matched by exact macro name ($w1..$w8, or 'all'); matched weapons join
+          the group, unmatched eligible weapons leave it. Primary groups take
+          guns, secondary groups take missile launchers (vanilla rule).
+        -->
+        <cue name="CoCaptain_OnSetWeaponGroup" instantiate="true">
+            <conditions>
+                <event_ui_triggered screen="'CoCaptainBridge'" control="'set_weapon_group'" />
+            </conditions>
+            <actions>
+                <do_if value="event.param3.{'$ship'}?">
+                    <set_value name="$ShipArg" exact="event.param3.{'$ship'}" />
+                    <set_value name="$Ship" exact="null" />
+                    <set_value name="$Matches" exact="0" />
+                    <find_ship name="$AllShips" space="player.galaxy" owner="faction.player" multiple="true" />
+                    <do_all exact="$AllShips.count" counter="$i">
+                        <do_if value="$AllShips.{$i}.idcode == $ShipArg or $AllShips.{$i}.knownname == $ShipArg">
+                            <set_value name="$Matches" operation="add" />
+                            <do_if value="not $Ship">
+                                <set_value name="$Ship" exact="$AllShips.{$i}" />
+                            </do_if>
+                        </do_if>
+                    </do_all>
+                    <do_if value="not $Ship">
+                        <show_notification text="'Co-captain: no owned ship matches ' + $ShipArg" />
+                    </do_if>
+                    <do_elseif value="$Matches gt 1">
+                        <show_notification text="'Co-captain: ' + $Matches + ' ships match ' + $ShipArg + ' - using ' + $Ship.knownname + ' ' + $Ship.idcode" />
+                    </do_elseif>
+                </do_if>
+                <do_else>
+                    <set_value name="$Ship" exact="player.occupiedship" />
+                    <do_if value="not $Ship.exists or $Ship.isclass.spacesuit or not $Ship.isplayerowned">
+                        <set_value name="$Ship" exact="null" />
+                        <show_notification text="'Co-captain: you are not aboard a ship of ours'" />
+                    </do_if>
+                </do_else>
+                <do_if value="$Ship">
+                    <set_value name="$Group" exact="(event.param3.{'$group'})i" />
+                    <set_value name="$Primary" exact="if event.param3.{'$primary'}? then event.param3.{'$primary'} else true" />
+                    <set_value name="$Activate" exact="@event.param3.{'$activate'}" />
+                    <do_if value="$Group lt 1 or $Group gt 4">
+                        <show_notification text="'Co-captain: weapon group must be 1-4, got ' + $Group" />
+                    </do_if>
+                    <do_else>
+                        <set_value name="$Wanted" exact="[]" />
+                        <do_all exact="8" counter="$k">
+                            <set_value name="$Key" exact="'$w' + $k" />
+                            <do_if value="event.param3.{$Key}?">
+                                <append_to_list name="$Wanted" exact="event.param3.{$Key}" />
+                            </do_if>
+                        </do_all>
+                        <set_value name="$All" exact="$Wanted.indexof.{'all'} gt 0" />
+                        <set_value name="$Added" exact="0" />
+                        <set_value name="$Removed" exact="0" />
+                        <do_for_each name="$W" in="$Ship.weapons.operational.list">
+                            <set_value name="$IsPrimary" exact="not $W.isclass.missilelauncher" />
+                            <do_if value="$IsPrimary == $Primary">
+                                <set_value name="$MacroName" exact="if @$W.macro.name then $W.macro.name else ''" />
+                                <do_if value="$All or $Wanted.indexof.{$MacroName} gt 0">
+                                    <add_weapon_to_weapongroup weapon="$W" weapongroup="$Group" primary="$Primary" />
+                                    <set_value name="$Added" operation="add" />
+                                </do_if>
+                                <do_else>
+                                    <remove_weapon_from_weapongroup weapon="$W" weapongroup="$Group" primary="$Primary" />
+                                    <set_value name="$Removed" operation="add" />
+                                </do_else>
+                            </do_if>
+                        </do_for_each>
+                        <do_if value="$Activate">
+                            <activate_weapongroup object="$Ship" weapongroup="$Group" primary="$Primary" />
+                        </do_if>
+                        <set_value name="$Kind" exact="if $Primary then 'primary' else 'secondary'" />
+                        <show_notification text="'Co-captain: ' + $Kind + ' weapon group ' + $Group + ' on ' + $Ship.knownname + ' ' + $Ship.idcode + ' = ' + $Added + ' weapons (' + $Removed + ' excluded)' + (if $Activate then ', active' else '')" />
+                        <write_to_logbook category="general" title="'Co-captain order'" text="'Weapon group: ' + $Kind + ' ' + $Group + ' on ' + $Ship.knownname + ' ' + $Ship.idcode + ' set to ' + $Added + ' weapons'" />
+                    </do_else>
                 </do_if>
             </actions>
         </cue>

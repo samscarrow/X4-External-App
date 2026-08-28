@@ -41,7 +41,7 @@ missing bridge is diagnosable rather than silent.
 
 The MCP tools wrap these one-to-one: `notify_player`, `write_logbook`, `set_guidance`,
 `fly_my_ship_to`, `order_ship_to`, `clear_ship_orders`, `ping_ship`, `set_weapons_hold`,
-`get_ship_loadout`, `rekit_ship`, plus `get_command_queue` and `cancel_command`.
+`get_ship_loadout`, `rekit_ship`, `set_weapon_group`, plus `get_command_queue` and `cancel_command`.
 
 ## Command types
 
@@ -55,6 +55,7 @@ The MCP tools wrap these one-to-one: `notify_player`, `write_logbook`, `set_guid
 | `clear_ship_orders` | `{ship?}` | The undo: `cancel_all_orders` on a named own ship, or the ship the player is aboard when omitted. Ticker + logbook audit entry; the captain idles until given new orders. |
 | `ping_ship` | `{ship}` | Locate an own ship: signals `md.Guidance.NewTarget` with the ship component, so the HUD marker **tracks the ship live** (vanilla handles the moving target and cleanup), and reports the ship's current sector in the ticker. HUD-only; subject to the same active-mission supersession as `set_guidance`. |
 | `set_weapons_hold` | `{ship?, hold}` | Weapons discipline: `hold=true` disarms all turrets (`set_turrets_armed`, **persists** until released) + immediate `cease_fire`; `hold=false` re-arms. Ticker + logbook both ways. |
+| `set_weapon_group` | `{ship?, group, weapons[], primary?, activate?}` | **Cockpit weapon groups** - what the ship's weapon-configuration panel does: for group 1-4, every eligible installed weapon whose macro name is listed (Lua flattens the list to `$w1..$w8`; `'all'` = every eligible weapon) is added with `add_weapon_to_weapongroup`, every other eligible weapon is removed. Primary groups take guns, secondary groups take missile launchers (`isclass.missilelauncher`, the vanilla rule). Optional `activate_weapongroup`. The loadout report carries per-weapon membership so the result is verifiable. Groups only matter with the player at the helm. |
 | `get_ship_loadout` | `{ship?}` | On-demand armament report: `find_object_component` enumerates installed weapons/turrets + aggregate DPS → blackboard `$cocaptain_loadout` → telemetry key `ship_loadout` on the next cycle. The MCP tool enqueues and waits for the report. |
 | `rekit_ship` | `{ship, loadout, station}` | **Legit wharf refit**: `add_build_to_modify_ship` (station must satisfy `canequipships`; `loadout` is a loadout ID valid for the hull — player-saved wharf loadouts or predefined) then the vanilla `Equip` order — the ship flies there, docks, and is refitted by the station. Invalid loadout ids fail at build creation with a ticker notice. Deliberately **not** implemented as `apply_loadout` (instant-refit cheating). Loadout IDs are `player_<timestamp>` strings from the profile's `loadouts.xml` (next to the `save` folder); the server exposes them at `GET /api/loadouts` and the MCP `rekit_ship` tool resolves a saved loadout *name* to its id (`list_loadouts` to browse). A loadout is only valid for the exact ship macro it was saved for. |
 

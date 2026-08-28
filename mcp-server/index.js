@@ -859,7 +859,8 @@ server.registerTool(
     {
         title: "Get a ship's installed armament",
         description: "On-demand armament report for a player-owned ship: installed weapons and turrets " +
-            "(by equipment name) plus aggregate DPS. The game gathers it via the bridge and it returns " +
+            "(by equipment name), each weapon's group membership (`weapon_groups`, e.g. 'primary:1,2'), " +
+            "active groups, plus aggregate DPS. The game gathers it via the bridge and it returns " +
             "on the next telemetry cycle (this tool waits up to ~15s). Use before advising on weapons " +
             "hold, escort choice, or a rekit_ship refit.",
         inputSchema: {
@@ -869,25 +870,90 @@ server.registerTool(
         },
     },
     async ({ ship }) => {
-        const before = await fetchJson("/api/data");
-        const prevTime = before?.data?.ship_loadout?.game_time;
-        const queued = await fetchJson("/api/commands", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ type: "get_ship_loadout", payload: { ship } }),
-        });
-        if (queued.error) return errorResult(queued.error);
-        if (!queued.ok) return errorResult(queued.data?.error ?? `Enqueue failed (HTTP ${queued.status})`);
-        for (let i = 0; i < 10; i++) {
-            await new Promise((resolve) => setTimeout(resolve, 1500));
-            const live = await fetchJson("/api/data");
-            const report = live?.data?.ship_loadout;
-            if (report && report.game_time !== prevTime) {
-                return jsonResult({ loadout: report });
-            }
+        const { report, error } = await fetchLoadoutReport(ship);
+        if (error) return errorResult(error);
+        return jsonResult({ loadout: report });
+    }
+);
+
+/** Ask the game for a fresh armament report and wait (~15s max) for it to land in /api/data. */
+async function fetchLoadoutReport(ship) {
+    const before = await fetchJson("/api/data");
+    const prevTime = before?.data?.ship_loadout?.game_time;
+    const queued = await fetchJson("/api/commands", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "get_ship_loadout", payload: { ship } }),
+    });
+    if (queued.error) return { error: queued.error };
+    if (!queued.ok) return { error: queued.data?.error ?? `Enqueue failed (HTTP ${queued.status})` };
+    for (let i = 0; i < 10; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        const live = await fetchJson("/api/data");
+        const report = live?.data?.ship_loadout;
+        if (report && report.game_time !== prevTime) {
+            return { report };
         }
-        return errorResult("No loadout report arrived within 15s - is the game running (and unpaused) " +
-            "with the current bridge version? The report may still land in /api/data shortly.");
+    }
+    return {
+        error: "No loadout report arrived within 15s - is the game running (and unpaused) " +
+            "with the current bridge version? The report may still land in /api/data shortly.",
+    };
+}
+
+/** Expand user-friendly weapon patterns (macro substrings or 'all') to exact installed weapon macros. */
+function matchWeaponMacros(patterns, installed) {
+    if (patterns.some((p) => p.toLowerCase() === "all")) return { macros: ["all"], unmatched: [] };
+    const macros = new Set();
+    const unmatched = [];
+    for (const pattern of patterns) {
+        const needle = pattern.toLowerCase();
+        const hits = installed.filter((m) => String(m).toLowerCase().includes(needle));
+        if (hits.length === 0) unmatched.push(pattern);
+        for (const hit of hits) macros.add(hit);
+    }
+    return { macros: [...macros], unmatched };
+}
+
+server.registerTool(
+    "set_weapon_group",
+    {
+        title: "Configure a cockpit weapon group on a player ship",
+        description: "Sets which installed weapons belong to weapon group 1-4 - the same thing the ship's " +
+            "weapon-configuration panel does, so the player can fire fewer (or more) guns per trigger. " +
+            "Weapons are named by substring of their macro (e.g. 'plasma', 'shard', 'torpedo') or 'all'; " +
+            "matched weapons join the group, other eligible weapons leave it. Primary groups hold guns, " +
+            "secondary groups hold missile launchers (vanilla rule) - a torpedo pattern with primary=true " +
+            "matches nothing. Fetches the ship's live loadout first to resolve patterns, then applies. " +
+            "Groups matter only when the player is at the helm; NPC captains ignore them. Strictly " +
+            "on-request.",
+        inputSchema: {
+            ship: z.string().optional()
+                .describe("Ship ID code or exact known ship name. Omitted: the ship the player is aboard"),
+            group: z.number().int().min(1).max(4).describe("Weapon group number 1-4"),
+            weapons: z.array(z.string().min(1)).min(1).max(8)
+                .describe("Macro substrings to include (e.g. ['plasma']) or ['all']"),
+            primary: z.boolean().default(true)
+                .describe("true: primary group (guns). false: secondary group (missile launchers)"),
+            activate: z.boolean().default(false).describe("Also make this the active group"),
+        },
+    },
+    async ({ ship, group, weapons, primary, activate }) => {
+        const { report, error } = await fetchLoadoutReport(ship);
+        if (error) return errorResult(error);
+        const installed = Array.isArray(report?.weapons) ? report.weapons : [];
+        const { macros, unmatched } = matchWeaponMacros(weapons, installed);
+        if (macros.length === 0) {
+            return errorResult(`No installed weapon on ${report?.name ?? "the ship"} matches ${JSON.stringify(weapons)}. ` +
+                `Installed: ${installed.join(", ") || "none"}`);
+        }
+        const queued = await enqueueCommand("set_weapon_group", { ship, group, weapons: macros, primary, activate });
+        queued.content.unshift({
+            type: "text",
+            text: `Group ${group} (${primary ? "primary" : "secondary"}) on ${report?.name ?? "?"} ${report?.idcode ?? ""}: ` +
+                `${macros.join(", ")}` + (unmatched.length ? ` (no match for: ${unmatched.join(", ")})` : ""),
+        });
+        return queued;
     }
 );
 

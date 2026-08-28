@@ -75,3 +75,28 @@ test("differ: savegame_parsed on id change only", () => {
     assert.equal(events[0].type, "savegame_parsed");
     assert.equal(events[0].savegame_id, 4);
 });
+
+test("fleet diff: lost, added, hull crossings, uncrewed, idle", () => {
+    const d = new EventDiffer();
+    const base = () => ({ playerProfile: { credits: 1 }, logbook: [], factions: [] });
+    const ship = (o) => ({ idcode: "AAA-1", name: "Alpha", size: "M", purpose: "fight", hull: 100, shield: 100,
+        sector: "X", order: "Patrol", has_captain: true, ...o });
+
+    // first sweep initialises silently
+    assert.deepEqual(d.diff({ ...base(), fleet: [ship({}), ship({ idcode: "BBB-2", name: "Beta" })] }), []);
+    // empty sweep is ignored, not treated as total loss
+    assert.deepEqual(d.diff({ ...base(), fleet: [] }), []);
+
+    let ev = d.diff({ ...base(), fleet: [ship({ hull: 40 }), ship({ idcode: "BBB-2", name: "Beta" }), ship({ idcode: "CCC-3", name: "Gamma" })] });
+    assert.deepEqual(ev.map((e) => [e.type, e.severity]), [["ship_hull_critical", "notable"], ["ship_added", "notable"]]);
+
+    ev = d.diff({ ...base(), fleet: [ship({ hull: 10, order: "", has_captain: false }), ship({ idcode: "CCC-3", name: "Gamma" })] });
+    assert.deepEqual(ev.map((e) => e.type), ["ship_hull_critical", "ship_uncrewed", "ship_idle", "ship_lost"]);
+    assert.equal(ev[0].severity, "urgent");
+    assert.equal(ev[3].idcode, "BBB-2");
+    assert.equal(ev[2].last_order, "Patrol");
+
+    // repairs do not fire; same bucket does not re-fire
+    assert.deepEqual(d.diff({ ...base(), fleet: [ship({ hull: 12, order: "", has_captain: false }), ship({ idcode: "CCC-3", name: "Gamma" })] }), []);
+    assert.deepEqual(d.diff({ ...base(), fleet: [ship({ hull: 90, order: "", has_captain: false }), ship({ idcode: "CCC-3", name: "Gamma" })] }), []);
+});
